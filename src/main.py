@@ -20,18 +20,21 @@ class WaveformApp(tk.Tk):
 
         tkinter_figure(
             self,
-            [y, np.zeros_like(y), np.zeros_like(y)],
+            [y, np.zeros_like(y), np.zeros_like(y), np.zeros_like(y)],
             sr,
-            labels=["original", "direct reconstruction", "linear reconstruction"],
+            labels=["original", "direct reconstruction", "linear reconstruction", "sinc reconstruction"],
             title=str(path),
             zoom_seconds=0.01
         )
+
+        self.lines_by_label = {line.get_label(): line for line in self._plot_lines}
 
         self.sample_frequency = self.ui.bind_slider(
             "sample_frequency",
             0.5, 48000.0, 7.0,
             step=0.1,
             label="Sample Frequency (Hz)",
+            length=600,
         )
 
         self._recompute_job = None
@@ -52,13 +55,17 @@ class WaveformApp(tk.Tk):
         fs = float(self.sample_frequency.get())
         idx = sample_indices(len(y), sr, fs)
 
-        reconstructions = [
-            direct_reconstruction(y, idx),
-            linear_reconstruction(y, idx),
-        ]
+        recon_fns = {
+            "direct reconstruction": lambda: direct_reconstruction(y, idx),
+            "linear reconstruction": lambda: linear_reconstruction(y, idx),
+            "sinc reconstruction": lambda: sinc_reconstruction(y, sr, fs),
+        }
 
-        for line, data in zip(self._plot_lines[1:], reconstructions):
-            line.set_ydata(data)
+        for label, fn in recon_fns.items():
+            line = self.lines_by_label[label]  # (we’ll create this mapping below)
+            if not line.get_visible():
+                continue
+            line.set_ydata(fn())
 
         self.ui.ctx["canvas"].draw_idle()
 

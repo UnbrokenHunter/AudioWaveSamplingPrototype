@@ -177,6 +177,11 @@ def tkinter_figure(
 
         self.canvas.draw_idle()
 
+        # If a line was just enabled, ask the app to recompute
+        if vis and hasattr(self, "request_recompute"):
+            self.request_recompute()
+
+
     # Connect pick handler
     self._pick_cid = self.fig.canvas.mpl_connect("pick_event", on_pick)
 
@@ -315,7 +320,7 @@ def tkinter_figure(
     apply_view()
 
     # --- Extras area for inline UI variables ---
-    self.extras = tk.LabelFrame(self, text="Extras")
+    self.extras = tk.LabelFrame(self, text="Hooks")
     self.extras.pack(fill=tk.X, padx=6, pady=6)
 
     ctx = {
