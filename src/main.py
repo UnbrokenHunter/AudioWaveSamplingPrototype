@@ -20,9 +20,21 @@ class WaveformApp(tk.Tk):
 
         tkinter_figure(
             self,
-            [y, np.zeros_like(y), np.zeros_like(y), np.zeros_like(y)],
+            [
+                y, 
+                np.zeros_like(y), 
+                np.zeros_like(y), 
+                np.zeros_like(y),
+                np.zeros_like(y),
+            ],
             sr,
-            labels=["original", "direct reconstruction", "linear reconstruction", "sinc reconstruction"],
+            labels=[
+                "original", 
+                "direct reconstruction", 
+                "linear reconstruction", 
+                "sinc reconstruction",
+                "dac reconstruction",
+            ],
             title=str(path),
             zoom_seconds=0.01
         )
@@ -59,6 +71,7 @@ class WaveformApp(tk.Tk):
             "direct reconstruction": lambda: direct_reconstruction(y, idx),
             "linear reconstruction": lambda: linear_reconstruction(y, idx),
             "sinc reconstruction": lambda: sinc_reconstruction(y, sr, fs),
+            "dac reconstruction": lambda: dac_reconstruction(y, idx, sr, fs),
         }
 
         for label, fn in recon_fns.items():
