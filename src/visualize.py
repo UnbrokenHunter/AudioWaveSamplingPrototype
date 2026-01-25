@@ -232,6 +232,8 @@ def _slice_visible_window(app, y):
 
 
 def request_bottom_update(app, delay_ms=80):
+    if app.bottom_mode.get() == "OFF":
+        return
     job = getattr(app, "_bottom_job", None)
     if job is not None:
         app.after_cancel(job)
@@ -298,6 +300,7 @@ def tkinter_figure(self, samples_list, sr, labels=None, title="Waveforms", zoom_
     # --- bottom container: we'll toggle between FFT (2D) and STFT (3D) ---
     self.bottom_container = tk.Frame(plot_bottom)
     self.bottom_container.pack(fill=tk.BOTH, expand=True)
+    self._plot_bottom_frame = plot_bottom
 
     # 2D FFT
     self.fft_fig = Figure(figsize=(16, 1.6), dpi=100, constrained_layout=True)
@@ -309,6 +312,8 @@ def tkinter_figure(self, samples_list, sr, labels=None, title="Waveforms", zoom_
     self.fft_widget = self.fft_canvas.get_tk_widget()
     self.bottom_toolbar = NavigationToolbar2Tk(self.fft_canvas, plot_bottom)
     self.bottom_toolbar.update()
+    self.bottom_toolbar.pack_forget()                  # take control
+    self.bottom_toolbar.pack(side=tk.BOTTOM, fill=tk.X)
 
     # 3D STFT
     self.spec_fig = Figure(figsize=(16, 1.6), dpi=100, constrained_layout=False)
@@ -381,7 +386,6 @@ def tkinter_figure(self, samples_list, sr, labels=None, title="Waveforms", zoom_
     _apply_view(self)
     request_bottom_update(self)
 
-
 # ============================================================
 # Controls builders
 # ============================================================
@@ -402,6 +406,19 @@ def _build_playback_controls(app, parent, labels):
 
     tk.Button(controls, text="Play", command=lambda: _on_play(app)).pack(side=tk.LEFT, padx=8, pady=6)
     tk.Button(controls, text="Stop", command=stop_audio).pack(side=tk.LEFT, padx=4, pady=6)
+   
+def _hide_bottom_area(app):
+    # hide plot area + toolbar
+    if hasattr(app, "bottom_toolbar") and app.bottom_toolbar is not None:
+        app.bottom_toolbar.pack_forget()
+    app._plot_bottom_frame.pack_forget()
+
+def _show_bottom_area(app):
+    # show plot area + toolbar
+    app._plot_bottom_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+    if hasattr(app, "bottom_toolbar") and app.bottom_toolbar is not None:
+        # toolbar lives in plot_bottom, so repack it
+        app.bottom_toolbar.pack(side=tk.BOTTOM, fill=tk.X)
 
 
 def _build_window_controls(app, parent, zoom_seconds):
@@ -457,8 +474,12 @@ def _build_bottom_controls(app, parent):
     bottom = tk.LabelFrame(parent, text="Bottom Plot")
     bottom.pack(side=tk.LEFT, fill=tk.BOTH, expand=False, padx=(6, 0))
 
+    tk.Radiobutton(bottom, text="Off", value="OFF", variable=app.bottom_mode,
+                   command=lambda: _on_bottom_mode(app)).pack(side=tk.LEFT, padx=8, pady=6)
+
     tk.Radiobutton(bottom, text="FFT (2D)", value="FFT", variable=app.bottom_mode,
                    command=lambda: _on_bottom_mode(app)).pack(side=tk.LEFT, padx=8, pady=6)
+
     tk.Radiobutton(bottom, text="STFT (3D)", value="STFT", variable=app.bottom_mode,
                    command=lambda: _on_bottom_mode(app)).pack(side=tk.LEFT, padx=8, pady=6)
 
@@ -554,7 +575,17 @@ def _wire_legend_toggle(app):
 
 
 def _on_bottom_mode(app):
-    app._show_bottom_mode(app.bottom_mode.get())
+    mode = app.bottom_mode.get()
+    app._show_bottom_mode(mode)
+
+    # Cancel any scheduled bottom update if turning OFF
+    if mode == "OFF":
+        job = getattr(app, "_bottom_job", None)
+        if job is not None:
+            app.after_cancel(job)
+            app._bottom_job = None
+        return
+
     request_bottom_update(app)
 
 
@@ -565,7 +596,10 @@ def _show_one(widget_to_show, widget_to_hide):
 
 def _update_bottom_plot(app):
     app._bottom_job = None
+
     mode = app.bottom_mode.get()
+    if mode == "OFF":
+        return
     if mode == "FFT":
         _update_fft_2d(app)
     else:
@@ -757,6 +791,11 @@ def _update_stft_3d(app):
 
 
 def _show_bottom_mode(self, mode):
+    if mode == "OFF":
+        _hide_bottom_area(self)
+        return
+
+    _show_bottom_area(self)
     if mode == "FFT":
         _show_one(self.fft_widget, self.spec_widget)
     else:

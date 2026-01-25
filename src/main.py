@@ -11,7 +11,7 @@ class WaveformApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Waveform Viewer")
-        self.geometry("1100x700")
+        self.geometry("1200x700")
 
         y, sr, path = select_file()
 
