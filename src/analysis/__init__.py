@@ -6,3 +6,4 @@ from analysis.analysis_reshaping import *
 from analysis.analysis_debug import *
 from analysis.analysis_channel import *
 from analysis.analysis_math import *
+from analysis.analysis_fft import *

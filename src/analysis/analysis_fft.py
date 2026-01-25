@@ -106,17 +106,30 @@ def stft(y, n_fft=1024, hop=256, window="hann", center=True):
     return out
 
 
-def stft_mag_db(y, sr, n_fft=1024, hop=256, ref=1.0):
+def stft_mag_db(y, sr, n_fft=1024, hop=256):
     """
-    Convenience STFT → magnitude in dB.
-
     Returns:
-        times_sec, freqs_hz, mag_db
+      f (Hz) shape (n_freq,)
+      t (sec) shape (n_frames,)
+      S_db shape (n_freq, n_frames)
     """
-    X = stft(y, n_fft=n_fft, hop=hop, window="hann", center=True)
-    mag = np.abs(X)
-    mag_db = mag_to_db(mag, ref=ref)
+    y = np.asarray(y, dtype=np.float64).reshape(-1)
 
-    freqs = np.fft.rfftfreq(n_fft, d=1.0 / float(sr))
-    times = np.arange(X.shape[0]) * (float(hop) / float(sr))
-    return times, freqs, mag_db
+    # pad to at least one frame
+    if y.size < n_fft:
+        y = np.pad(y, (0, n_fft - y.size))
+
+    w = np.hanning(n_fft)
+
+    # build frames
+    frames = np.lib.stride_tricks.sliding_window_view(y, n_fft)[::hop]
+    if frames.ndim != 2 or frames.shape[0] == 0:
+        frames = y[:n_fft][None, :]
+
+    X = np.fft.rfft(frames * w[None, :], axis=1)  # (n_frames, n_freq)
+    mag = np.abs(X)
+    S_db = (20.0 * np.log10(mag + 1e-12)).T       # (n_freq, n_frames)
+
+    f = np.fft.rfftfreq(n_fft, d=1.0 / float(sr))
+    t = (np.arange(S_db.shape[1]) * hop) / float(sr)
+    return f, t, S_db

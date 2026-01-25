@@ -1,10 +1,21 @@
+# visualize.py
 import tkinter as tk
 import numpy as np
 
 from matplotlib.figure import Figure
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+import matplotlib.ticker as mticker
+
+# 3D axes
+from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+import matplotlib.cm as cm
 
 from playback import play_audio, stop_audio
+
+
+# ============================================================
+# UI helper
+# ============================================================
 
 class UI:
     def __init__(self, app, parent, ctx):
@@ -27,9 +38,15 @@ class UI:
         step=0.1,
         label=None,
         length=300,
-        log=False,              # NEW: log slider option
-        entry_width=10,         # NEW: nicer entry
+        log=False,
+        entry_width=10,
     ):
+        """
+        Slider + entry bound to the same tk.DoubleVar.
+
+        - log=False: slider is linear in value
+        - log=True:  slider is linear in log10(value), but returned var is still linear value.
+        """
         r = self.row()
         if label is None:
             label = name
@@ -37,7 +54,7 @@ class UI:
         lo = float(from_)
         hi = float(to)
 
-        # For log sliders, the range must be > 0
+        # log sliders require positive range
         if log:
             lo = max(lo, 1e-12)
             hi = max(hi, lo * 1.000001)
@@ -45,21 +62,19 @@ class UI:
 
         tk.Label(r, text=f"{label}:").pack(side=tk.LEFT)
 
-        # "real" value variable (always linear space)
+        # real value var (linear space)
         var = tk.DoubleVar(value=float(value))
         setattr(self.app, name, var)
 
-        # A tiny sub-frame for slider + entry so the entry never feels cramped
         inner = tk.Frame(r)
         inner.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6)
 
-        # --- Slider variable ---
+        # slider var (maybe log)
         if log:
-            # slider controls log10(value)
             slider_var = tk.DoubleVar(value=float(np.log10(var.get())))
             slider_from = float(np.log10(lo))
             slider_to = float(np.log10(hi))
-            slider_res = 0.001  # log slider smoothness
+            slider_res = 0.001
         else:
             slider_var = var
             slider_from = lo
@@ -74,13 +89,12 @@ class UI:
             orient="horizontal",
             variable=slider_var,
             length=length,
-            showvalue=False,   # nicer since entry shows the value
+            showvalue=False,
         )
         slider.pack(side=tk.LEFT, fill=tk.X, expand=True)
         setattr(self.app, f"{name}_slider", slider)
 
-        # --- Better Entry box (bigger hitbox, always clickable) ---
-        entry_frame = tk.Frame(inner, padx=4)
+        entry_frame = tk.Frame(inner, padx=6)
         entry_frame.pack(side=tk.LEFT)
 
         entry_var = tk.StringVar(value=f"{var.get():g}")
@@ -89,61 +103,67 @@ class UI:
             textvariable=entry_var,
             width=entry_width,
             takefocus=True,
-            bd=2,              # more clickable border
-            relief="groove",
+            bd=2,
+            relief="solid",
             justify="right",
         )
         entry.pack(side=tk.LEFT)
         setattr(self.app, f"{name}_entry", entry)
 
         def clamp(v):
-            return max(lo, min(hi, v))
+            return max(lo, min(hi, float(v)))
+
+        # prevent "fighting" while typing
+        editing = {"active": False}
 
         def sync_entry():
-            entry_var.set(f"{var.get():g}")
+            if not editing["active"]:
+                entry_var.set(f"{var.get():g}")
 
-        def set_var_from_entry():
+        def set_from_slider():
+            if log:
+                v = 10 ** float(slider_var.get())
+                v = clamp(v)
+                var.set(v)
+            sync_entry()
+
+        def commit_entry(_event=None):
+            editing["active"] = False
             try:
                 v = float(entry_var.get())
             except ValueError:
                 sync_entry()
                 return
+
             v = clamp(v)
             var.set(v)
-
             if log:
                 slider_var.set(float(np.log10(v)))
-
             sync_entry()
 
-        def set_var_from_slider():
-            if log:
-                v = 10 ** float(slider_var.get())
-                v = clamp(v)
-                var.set(v)
-            # if not log, slider_var is var already
-            sync_entry()
+        def begin_edit(_event=None):
+            editing["active"] = True
+            entry.focus_set()
+            entry.selection_range(0, tk.END)
+            return None  # allow normal click selection too
 
-        # Slider movement updates var + entry
-        slider.configure(command=lambda _v: set_var_from_slider())
+        slider.configure(command=lambda _v: set_from_slider())
+        entry.bind("<Button-1>", begin_edit)
+        entry.bind("<Return>", commit_entry)
+        entry.bind("<FocusOut>", commit_entry)
 
-        # Entry commit
-        entry.bind("<Return>", lambda _e: set_var_from_entry())
-        entry.bind("<FocusOut>", lambda _e: set_var_from_entry())
-
-        # Make clicking anywhere near the entry focus it (helps the “hard to click” feeling)
-        entry_frame.bind("<Button-1>", lambda _e: entry.focus_set())
-        entry.bind("<Button-1>", lambda _e: entry.focus_set())
-
-        # If var changes externally (rare), keep entry in sync
         var.trace_add("write", lambda *_: sync_entry())
 
-        # Initialize consistency
         sync_entry()
         if log:
             slider_var.set(float(np.log10(var.get())))
 
         return var
+
+
+# ============================================================
+# Array helpers
+# ============================================================
 
 def _to_channel_last(samples):
     samples = np.asarray(samples)
@@ -152,70 +172,6 @@ def _to_channel_last(samples):
     if samples.shape[0] in (1, 2) and samples.shape[0] < samples.shape[1]:
         return samples.T
     return samples
-
-
-def tkinter_figure(self, samples_list, sr, labels=None, title="Waveforms", zoom_seconds=1.0):
-    _validate_inputs(samples_list, labels)
-
-    self.samples_list = samples_list
-    self.labels = labels if labels is not None else [f"signal {i}" for i in range(len(samples_list))]
-    self.sr = sr
-    self.total_duration = _compute_total_duration(samples_list, sr)
-
-    plot_top, plot_bottom = _build_plot_frames(self)
-
-    # Waveform plot
-    self.fig, self.ax, self._plot_lines = _build_waveform_plot(
-        self, plot_top, samples_list, sr, self.labels, title
-    )
-
-    # FFT plot
-    self.fft_fig, self.fft_ax, self.fft_canvas = _build_fft_plot(self, plot_bottom)
-
-    # Controls
-    top_controls = tk.Frame(self)
-    top_controls.pack(fill=tk.X, padx=6, pady=6)
-
-    _build_playback_controls(self, top_controls, self.labels)
-    _build_window_controls(self, top_controls, zoom_seconds)
-
-    # Hooks area + UI helper
-    self.extras = tk.LabelFrame(self, text="Hooks")
-    self.extras.pack(fill=tk.X, padx=6, pady=6)
-
-    # Expose helpers to the outside world
-    ctx = {
-        "sr": self.sr,
-        "ax": self.ax,
-        "fig": self.fig,
-        "canvas": self.canvas,
-        "fft_ax": self.fft_ax,
-        "fft_fig": self.fft_fig,
-        "fft_canvas": self.fft_canvas,
-        "update_fft": lambda: _update_fft(self, use_visible_window=True),
-        "apply_view": lambda: _apply_view(self),
-        "zoom_var": self.zoom_var,
-        "pos_var": self.pos_var,
-    }
-    self.ui = UI(self, self.extras, ctx)
-
-    # Legend toggle wiring (needs update_fft + recompute hooks)
-    _wire_legend_toggle(self)
-
-    # Initial draw
-    _apply_view(self)
-    _update_fft(self, use_visible_window=True)
-
-
-# -------------------------
-# Helpers
-# -------------------------
-
-def _validate_inputs(samples_list, labels):
-    if not isinstance(samples_list, (list, tuple)) or len(samples_list) == 0:
-        raise TypeError("samples_list must be a non-empty list/tuple of arrays")
-    if labels is not None and len(labels) != len(samples_list):
-        raise ValueError("labels must match samples_list length")
 
 
 def _compute_total_duration(samples_list, sr):
@@ -227,63 +183,208 @@ def _compute_total_duration(samples_list, sr):
     return max(durations) if durations else 0.0
 
 
-def _build_plot_frames(app):
-    plots = tk.Frame(app)
+def _db(x):
+    x = np.asarray(x)
+    return 20.0 * np.log10(np.maximum(x, 1e-12))
+
+
+# ============================================================
+# FFT / STFT helpers
+# ============================================================
+
+def stft_mag_db(y, sr, n_fft=1024, hop=256):
+    """
+    Returns:
+      f (Hz) shape (n_freq,)
+      t (sec) shape (n_frames,)
+      S_db shape (n_freq, n_frames)
+    """
+    y = np.asarray(y, dtype=np.float64).reshape(-1)
+
+    if y.size < n_fft:
+        y = np.pad(y, (0, n_fft - y.size))
+
+    w = np.hanning(n_fft)
+
+    frames = np.lib.stride_tricks.sliding_window_view(y, n_fft)[::hop]
+    if frames.ndim != 2 or frames.shape[0] == 0:
+        frames = y[:n_fft][None, :]
+
+    X = np.fft.rfft(frames * w[None, :], axis=1)  # (n_frames, n_freq)
+    mag = np.abs(X)
+    S_db = _db(mag).T  # (n_freq, n_frames)
+
+    f = np.fft.rfftfreq(n_fft, d=1.0 / float(sr))
+    t = (np.arange(S_db.shape[1]) * hop) / float(sr)
+    return f, t, S_db
+
+
+def _slice_visible_window(app, y):
+    sr = float(app.sr)
+    use_visible_window = bool(app.spec_follow_view.get())
+    if not use_visible_window:
+        return y
+
+    x0, x1 = app.ax.get_xlim()
+    i0 = max(0, int(round(x0 * sr)))
+    i1 = max(i0 + 2, int(round(x1 * sr)))
+    return y[i0:i1]
+
+
+def request_bottom_update(app, delay_ms=80):
+    job = getattr(app, "_bottom_job", None)
+    if job is not None:
+        app.after_cancel(job)
+    app._bottom_job = app.after(delay_ms, lambda: _update_bottom_plot(app))
+
+
+# ============================================================
+# Tkinter figure builder
+# ============================================================
+
+def tkinter_figure(self, samples_list, sr, labels=None, title="Waveforms", zoom_seconds=1.0):
+    if not isinstance(samples_list, (list, tuple)) or len(samples_list) == 0:
+        raise TypeError("samples_list must be a non-empty list/tuple of arrays")
+
+    if labels is None:
+        labels = [f"signal {i}" for i in range(len(samples_list))]
+    if len(labels) != len(samples_list):
+        raise ValueError("labels must match samples_list length")
+
+    self.samples_list = samples_list
+    self.labels = labels
+    self.sr = sr
+    self.total_duration = _compute_total_duration(samples_list, sr)
+
+    # --- layout frames (plots stacked: waveform on top, bottom viz below) ---
+    plots = tk.Frame(self)
     plots.pack(fill=tk.BOTH, expand=True)
 
     plot_top = tk.Frame(plots)
     plot_top.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
     plot_bottom = tk.Frame(plots)
-    plot_bottom.pack(side=tk.BOTTOM, fill=tk.X)
+    plot_bottom.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+    # plot_bottom.configure(height=170)     # make it a wide strip
+    # plot_bottom.pack_propagate(False)
 
-    return plot_top, plot_bottom
+    # --- top: waveform plot ---
+    self.fig = Figure(figsize=(6, 2), dpi=100, constrained_layout=True)
+    self.ax = self.fig.add_subplot(111)
+    self.ax.set_title(title)
+    self.ax.set_xlabel("Time (seconds)")
+    self.ax.set_ylabel("Amplitude")
 
-
-def _build_waveform_plot(app, parent, samples_list, sr, labels, title):
-    fig = Figure(figsize=(6, 4), dpi=100)
-    ax = fig.add_subplot(111)
-    ax.set_title(title)
-    ax.set_xlabel("Time (seconds)")
-    ax.set_ylabel("Amplitude")
-
-    plot_lines = []
+    self._plot_lines = []
     for samples, label in zip(samples_list, labels):
         y = _to_channel_last(samples)
         n_samples, n_channels = y.shape
-        t = np.arange(n_samples) / sr
+        t = np.arange(n_samples) / float(sr)
 
         for ch in range(n_channels):
             ch_label = f"{label} (ch {ch})" if n_channels > 1 else label
-            line, = ax.plot(t, y[:, ch], label=ch_label)
-            plot_lines.append(line)
+            line, = self.ax.plot(t, y[:, ch], label=ch_label)
+            self._plot_lines.append(line)
 
-    # Canvas
-    app.canvas = FigureCanvasTkAgg(fig, master=parent)
-    app.canvas.draw()
-    app.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+    self.lines_by_label = {line.get_label(): line for line in self._plot_lines}
 
-    # Legend (we’ll wire picker later)
-    ax.legend(loc="upper right")
+    # Legend now; clickable in _wire_legend_toggle()
+    self.ax.legend(loc="upper right")
 
-    return fig, ax, plot_lines
+    self.canvas = FigureCanvasTkAgg(self.fig, master=plot_top)
+    self.canvas.draw()
+    self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    # --- bottom container: we'll toggle between FFT (2D) and STFT (3D) ---
+    self.bottom_container = tk.Frame(plot_bottom)
+    self.bottom_container.pack(fill=tk.BOTH, expand=True)
+
+    # 2D FFT
+    self.fft_fig = Figure(figsize=(16, 1.6), dpi=100, constrained_layout=True)
+    self.fft_ax = self.fft_fig.add_subplot(111)
+    self.fft_ax.set_xlabel("Frequency (Hz)")
+    self.fft_ax.set_ylabel("Magnitude (dB)")
+    self.fft_canvas = FigureCanvasTkAgg(self.fft_fig, master=self.bottom_container)
+    self.fft_canvas.draw()
+    self.fft_widget = self.fft_canvas.get_tk_widget()
+    self.bottom_toolbar = NavigationToolbar2Tk(self.fft_canvas, plot_bottom)
+    self.bottom_toolbar.update()
+
+    # 3D STFT
+    self.spec_fig = Figure(figsize=(16, 1.6), dpi=100, constrained_layout=False)
+    self.spec_ax = self.spec_fig.add_subplot(111, projection="3d")
+    self.spec_ax.set_xlabel("Time (s)")
+    self.spec_ax.set_ylabel("Signal")
+    self.spec_ax.set_zlabel("Freq (Hz)")
+    self.spec_canvas = FigureCanvasTkAgg(self.spec_fig, master=self.bottom_container)
+    self.spec_canvas.draw()
+    self.spec_widget = self.spec_canvas.get_tk_widget()
+
+    # Only show one at a time
+    self.bottom_mode = tk.StringVar(value="FFT")  # "FFT" or "STFT"
+    self._show_bottom_mode("FFT")
+
+    # --- controls row ---
+    top_controls = tk.Frame(self)
+    top_controls.pack(fill=tk.X, padx=6, pady=6)
+
+    _build_playback_controls(self, top_controls, labels)
+    _build_window_controls(self, top_controls, zoom_seconds)
+    _build_bottom_controls(self, top_controls)
+
+    # --- hooks area ---
+    self.extras = tk.LabelFrame(self, text="Hooks")
+    self.extras.pack(fill=tk.X, padx=6, pady=6)
+
+    # Bottom plot knobs
+    self.spec_follow_view = tk.BooleanVar(value=True)
+
+    self.stft_nfft = tk.DoubleVar(value=1024.0)
+    self.stft_hop = tk.DoubleVar(value=256.0)
+    self.stft_log_freq = tk.BooleanVar(value=False)
+
+    self.fft_log_x = tk.BooleanVar(value=True)   # log frequency axis for FFT
+    self.fft_db = tk.BooleanVar(value=True)      # magnitude in dB
+
+    # Simple controls in Hooks
+    row = tk.Frame(self.extras)
+    row.pack(fill=tk.X, padx=6, pady=4)
+    tk.Checkbutton(row, text="Bottom follows visible window", variable=self.spec_follow_view,
+                   command=lambda: request_bottom_update(self)).pack(side=tk.LEFT)
+    tk.Checkbutton(row, text="STFT log-frequency axis", variable=self.stft_log_freq,
+                   command=lambda: request_bottom_update(self)).pack(side=tk.LEFT, padx=(10, 0))
+    tk.Checkbutton(row, text="FFT log-frequency axis", variable=self.fft_log_x,
+                   command=lambda: request_bottom_update(self)).pack(side=tk.LEFT, padx=(10, 0))
+
+    # Expose context
+    ctx = {
+        "sr": self.sr,
+        "ax": self.ax,
+        "fig": self.fig,
+        "canvas": self.canvas,
+        "fft_ax": self.fft_ax,
+        "fft_fig": self.fft_fig,
+        "fft_canvas": self.fft_canvas,
+        "spec_ax": self.spec_ax,
+        "spec_fig": self.spec_fig,
+        "spec_canvas": self.spec_canvas,
+        "apply_view": lambda: _apply_view(self),
+        "update_bottom": lambda: request_bottom_update(self),
+        "zoom_var": self.zoom_var,
+        "pos_var": self.pos_var,
+    }
+    self.ui = UI(self, self.extras, ctx)
+
+    _wire_legend_toggle(self)
+
+    # initial view + bottom plot
+    _apply_view(self)
+    request_bottom_update(self)
 
 
-def _build_fft_plot(app, parent):
-    fft_fig = Figure(figsize=(6, 2), dpi=100)
-    fft_ax = fft_fig.add_subplot(111)
-    fft_ax.set_xlabel("Frequency (Hz)")
-    fft_ax.set_ylabel("Magnitude (dB)")
-
-    # ✅ log frequency axis
-    fft_ax.set_xscale("log")
-
-    fft_canvas = FigureCanvasTkAgg(fft_fig, master=parent)
-    fft_canvas.draw()
-    fft_canvas.get_tk_widget().pack(fill=tk.X, expand=True)
-
-    return fft_fig, fft_ax, fft_canvas
-
+# ============================================================
+# Controls builders
+# ============================================================
 
 def _build_playback_controls(app, parent, labels):
     controls = tk.LabelFrame(parent, text="Playback")
@@ -313,11 +414,11 @@ def _build_window_controls(app, parent, zoom_seconds):
     app.zoom_var = tk.DoubleVar(value=float(zoom_seconds if zoom_seconds is not None else ZOOM_MAX))
     app.pos_var = tk.DoubleVar(value=0.0)
 
-    # Log zoom slider var
     app.zoom_var.set(max(ZOOM_MIN, min(float(app.zoom_var.get()), ZOOM_MAX)))
     app.zoom_log_var = tk.DoubleVar(value=float(np.log10(app.zoom_var.get())))
 
     tk.Label(sliders, text="Zoom (s):").pack(side=tk.LEFT, padx=(8, 4))
+
     app.zoom_slider = tk.Scale(
         sliders,
         from_=float(np.log10(ZOOM_MIN)),
@@ -327,11 +428,12 @@ def _build_window_controls(app, parent, zoom_seconds):
         variable=app.zoom_log_var,
         command=lambda _v: _on_zoom_slider(app, ZOOM_MIN, ZOOM_MAX),
         length=150,
+        showvalue=False,
     )
     app.zoom_slider.pack(side=tk.LEFT, padx=4, pady=6)
 
     app.zoom_entry_var = tk.StringVar(value=f"{app.zoom_var.get():g}")
-    zoom_entry = tk.Entry(sliders, textvariable=app.zoom_entry_var, width=8)
+    zoom_entry = tk.Entry(sliders, textvariable=app.zoom_entry_var, width=8, justify="right", bd=2, relief="solid")
     zoom_entry.pack(side=tk.LEFT, padx=(6, 0))
     zoom_entry.bind("<Return>", lambda _e: _commit_zoom_entry(app, ZOOM_MIN, ZOOM_MAX))
     zoom_entry.bind("<FocusOut>", lambda _e: _commit_zoom_entry(app, ZOOM_MIN, ZOOM_MAX))
@@ -346,9 +448,24 @@ def _build_window_controls(app, parent, zoom_seconds):
         variable=app.pos_var,
         command=lambda _v: _apply_view(app),
         length=150,
+        showvalue=False,
     )
     app.pos_slider.pack(side=tk.LEFT, padx=4, pady=6)
 
+
+def _build_bottom_controls(app, parent):
+    bottom = tk.LabelFrame(parent, text="Bottom Plot")
+    bottom.pack(side=tk.LEFT, fill=tk.BOTH, expand=False, padx=(6, 0))
+
+    tk.Radiobutton(bottom, text="FFT (2D)", value="FFT", variable=app.bottom_mode,
+                   command=lambda: _on_bottom_mode(app)).pack(side=tk.LEFT, padx=8, pady=6)
+    tk.Radiobutton(bottom, text="STFT (3D)", value="STFT", variable=app.bottom_mode,
+                   command=lambda: _on_bottom_mode(app)).pack(side=tk.LEFT, padx=8, pady=6)
+
+
+# ============================================================
+# View + legend + bottom plot update
+# ============================================================
 
 def _on_zoom_slider(app, ZOOM_MIN, ZOOM_MAX):
     z = 10 ** float(app.zoom_log_var.get())
@@ -387,11 +504,11 @@ def _apply_view(app):
     app.ax.set_xlim(p, p + z)
     app.canvas.draw_idle()
 
-    _update_fft(app, use_visible_window=True)
+    # bottom plot follows view (debounced)
+    request_bottom_update(app)
 
 
 def _wire_legend_toggle(app):
-    # Make a fresh legend so we can attach pickers
     leg = app.ax.legend(loc="upper right")
     app._legend_map = {}
 
@@ -413,7 +530,6 @@ def _wire_legend_toggle(app):
         vis = not orig.get_visible()
         orig.set_visible(vis)
 
-        # fade legend entry
         try:
             idx = app._plot_lines.index(orig)
         except ValueError:
@@ -426,31 +542,44 @@ def _wire_legend_toggle(app):
                 leg.get_texts()[idx].set_alpha(1.0 if vis else 0.2)
 
         app.canvas.draw_idle()
-        _update_fft(app, use_visible_window=True)
 
+        # update bottom
+        request_bottom_update(app)
+
+        # If enabled, ask the app to recompute (your main can hook this)
         if vis and hasattr(app, "request_recompute"):
             app.request_recompute()
 
     app._pick_cid = app.fig.canvas.mpl_connect("pick_event", on_pick)
 
 
-def _update_fft(app, use_visible_window=True):
+def _on_bottom_mode(app):
+    app._show_bottom_mode(app.bottom_mode.get())
+    request_bottom_update(app)
+
+
+def _show_one(widget_to_show, widget_to_hide):
+    widget_to_hide.pack_forget()
+    widget_to_show.pack(fill=tk.BOTH, expand=True)
+
+
+def _update_bottom_plot(app):
+    app._bottom_job = None
+    mode = app.bottom_mode.get()
+    if mode == "FFT":
+        _update_fft_2d(app)
+    else:
+        _update_stft_3d(app)
+
+
+def _update_fft_2d(app):
     sr = float(app.sr)
     if sr <= 0:
         return
 
     app.fft_ax.cla()
     app.fft_ax.set_xlabel("Frequency (Hz)")
-    app.fft_ax.set_ylabel("Magnitude (dB)")
-    app.fft_ax.set_xscale("log")  # ✅ keep log scale after cla()
-
-    # choose time range
-    if use_visible_window:
-        x0, x1 = app.ax.get_xlim()
-        i0 = max(0, int(round(x0 * sr)))
-        i1 = max(i0 + 2, int(round(x1 * sr)))
-    else:
-        i0, i1 = 0, None
+    app.fft_ax.set_ylabel("Magnitude (dB)" if app.fft_db.get() else "Magnitude")
 
     any_plotted = False
 
@@ -458,9 +587,8 @@ def _update_fft(app, use_visible_window=True):
         if not line.get_visible():
             continue
 
-        y = np.asarray(line.get_ydata(), dtype=np.float64)
-        if i1 is not None:
-            y = y[i0:i1]
+        y = np.asarray(line.get_ydata(), dtype=np.float64).reshape(-1)
+        y = _slice_visible_window(app, y)
 
         if y.size < 16:
             continue
@@ -471,27 +599,185 @@ def _update_fft(app, use_visible_window=True):
 
         Y = np.fft.rfft(yw)
         f = np.fft.rfftfreq(yw.size, d=1.0 / sr)
+        mag = np.abs(Y)
 
-        mag_db = 20.0 * np.log10(np.abs(Y) + 1e-12)
+        if app.fft_db.get():
+            mag = _db(mag)
 
-        # skip DC for log-axis
-        f = f[1:]
-        mag_db = mag_db[1:]
-        if f.size == 0:
-            continue
-
-        app.fft_ax.plot(f, mag_db, label=line.get_label())
+        app.fft_ax.plot(f, mag, label=line.get_label())
         any_plotted = True
 
-    # log axis can't include 0
-    fmin = 1.0
-    app.fft_ax.set_xlim(fmin, sr / 2.0)
+    if app.fft_log_x.get():
+        app.fft_ax.set_xscale("log")
+
+        # limits
+        fmin = 20
+        fmax = sr / 2.0
+        app.fft_ax.set_xlim(fmin, fmax)
+
+        # ---- nice log ticks ----
+        # Major ticks at decades (10, 100, 1000, 10000, ...)
+        app.fft_ax.xaxis.set_major_locator(mticker.LogLocator(base=10.0, numticks=12))
+
+        # Minor ticks between decades (2..9)
+        app.fft_ax.xaxis.set_minor_locator(
+            mticker.LogLocator(base=10.0, subs=np.arange(2, 10) * 0.1, numticks=100)
+        )
+
+        # Label majors as plain numbers (no 10^x)
+        app.fft_ax.xaxis.set_major_formatter(mticker.ScalarFormatter())
+        app.fft_ax.xaxis.set_minor_formatter(mticker.NullFormatter())
+
+        # Make sure ScalarFormatter actually uses plain formatting
+        app.fft_ax.ticklabel_format(axis="x", style="plain")
+
+        # Optional: hide crazy labels outside range
+        app.fft_ax.xaxis.get_major_formatter().set_useOffset(False)
+
+        # ---- grid styling ----
+        app.fft_ax.grid(True, which="major", axis="x", linewidth=0.8)
+        app.fft_ax.grid(True, which="minor", axis="x", linewidth=0.3, alpha=0.5)
+        app.fft_ax.grid(True, which="major", axis="y", linewidth=0.6, alpha=0.4)
+
+    else:
+        app.fft_ax.set_xlim(0, sr / 2.0)
+        app.fft_ax.grid(True, which="both", axis="both", alpha=0.3)
 
     if any_plotted:
         app.fft_ax.legend(loc="upper right", fontsize=8)
 
-    app.fft_fig.tight_layout()
+    # no tight_layout spam; one-time margin is fine
+    app.fft_fig.subplots_adjust(left=0.05, right=0.99, bottom=0.22, top=0.95)
     app.fft_canvas.draw_idle()
+
+
+def _log_freq(f, fmin):
+    return np.log10(np.maximum(f, float(fmin)))
+
+
+def _update_stft_3d(app):
+    sr = float(app.sr)
+    if sr <= 0:
+        return
+
+    app.spec_ax.cla()
+    app.spec_ax.set_xlabel("Time (s)")
+    app.spec_ax.set_ylabel("Signal")
+    app.spec_ax.set_zlabel("Frequency (Hz)" + (" (log)" if app.stft_log_freq.get() else ""))
+
+    visible_lines = [ln for ln in app._plot_lines if ln.get_visible()]
+    if not visible_lines:
+        app.spec_canvas.draw_idle()
+        return
+
+    # requested settings
+    n_fft_req = int(max(128, round(float(app.stft_nfft.get()))))
+    hop_req = int(max(16, round(float(app.stft_hop.get()))))
+
+    # speed knobs: decimate surface
+    max_f_bins = 80
+    max_t_bins = 140
+
+    any_drawn = False
+
+    for si, line in enumerate(visible_lines):
+        y = np.asarray(line.get_ydata(), dtype=np.float64).reshape(-1)
+        y = _slice_visible_window(app, y)
+
+        if y.size < 32:
+            continue
+
+        # make n_fft fit the slice (prevents "nothing drawn")
+        n_fft = min(n_fft_req, int(2 ** np.floor(np.log2(max(64, y.size)))))
+        n_fft = max(64, n_fft)
+        hop = min(hop_req, max(16, n_fft // 4))
+
+        f, tt, S_db = stft_mag_db(y, sr, n_fft=n_fft, hop=hop)
+        if f.size < 2 or tt.size < 1:
+            continue
+
+        # optional log-frequency axis for 3D (transform data)
+        if app.stft_log_freq.get():
+            fmin = 20.0
+            f_plot = _log_freq(f, fmin)
+        else:
+            f_plot = f
+
+        # decimate for 3D speed
+        f_step = max(1, S_db.shape[0] // max_f_bins)
+        t_step = max(1, S_db.shape[1] // max_t_bins)
+
+        f2 = f_plot[::f_step]
+        tt2 = tt[::t_step]
+        S2 = S_db[::f_step, ::t_step]
+
+        if f2.size < 2 or tt2.size < 2:
+            continue
+
+        T, Fm = np.meshgrid(tt2, f2)
+        Y = np.full_like(T, float(si))
+
+        vmin = np.percentile(S2, 10)
+        vmax = np.percentile(S2, 99)
+        norm = (S2 - vmin) / (vmax - vmin + 1e-12)
+        norm = np.clip(norm, 0, 1)
+        facecolors = cm.viridis(norm)
+
+        app.spec_ax.plot_surface(
+            T, Y, Fm,
+            rstride=1,
+            cstride=1,
+            facecolors=facecolors,
+            linewidth=0,
+            antialiased=False,
+            shade=False,
+        )
+        any_drawn = True
+
+    # stacked labels
+    app.spec_ax.set_yticks(range(len(visible_lines)))
+    app.spec_ax.set_yticklabels([ln.get_label() for ln in visible_lines], fontsize=8)
+
+    # If log axis, put nice Hz tick labels
+    if app.stft_log_freq.get():
+        hz_ticks = np.array([20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000], dtype=float)
+        hz_ticks = hz_ticks[hz_ticks <= sr / 2.0]
+        app.spec_ax.set_zticks(np.log10(hz_ticks))
+        app.spec_ax.set_zticklabels([f"{int(hz)}" for hz in hz_ticks])
+
+    # view angle
+    app.spec_ax.view_init(elev=25, azim=-20)
+
+    if not any_drawn:
+        app.spec_ax.text2D(0.02, 0.85, "No data drawn (window too small?)", transform=app.spec_ax.transAxes)
+
+    # one-time-ish margins (cheap)
+    app.spec_fig.subplots_adjust(left=0.02, right=0.99, bottom=0.02, top=0.98)
+    app.spec_canvas.draw_idle()
+
+
+def _show_bottom_mode(self, mode):
+    if mode == "FFT":
+        _show_one(self.fft_widget, self.spec_widget)
+    else:
+        _show_one(self.spec_widget, self.fft_widget)
+
+
+# monkey attach helper to instances
+def _attach_show_mode():
+    def _show(self, mode):
+        _show_bottom_mode(self, mode)
+    return _show
+
+
+# attach method name used above
+# (keeps your code style: self._show_bottom_mode(...))
+setattr(tk.Misc, "_show_bottom_mode", _attach_show_mode())
+
+
+# ============================================================
+# Playback
+# ============================================================
 
 def _on_play(app):
     label = app.selected_label.get()
@@ -500,6 +786,5 @@ def _on_play(app):
     except ValueError:
         idx = 0
 
-    y = app._plot_lines[idx].get_ydata()
+    y = np.asarray(app._plot_lines[idx].get_ydata(), dtype=np.float32).reshape(-1)
     play_audio(y, app.sr, blocking=False)
-

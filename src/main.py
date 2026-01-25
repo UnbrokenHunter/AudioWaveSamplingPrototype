@@ -82,6 +82,8 @@ class WaveformApp(tk.Tk):
                 continue
             line.set_ydata(fn())
 
+        request_bottom_update(self)
+
         self.ui.ctx["canvas"].draw_idle()
 
 
