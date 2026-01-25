@@ -154,44 +154,100 @@ def _to_channel_last(samples):
     return samples
 
 
-def tkinter_figure(
-    self,
-    samples_list,
-    sr,
-    labels=None,
-    title="Waveforms",
-    zoom_seconds=1.0,
-):
+def tkinter_figure(self, samples_list, sr, labels=None, title="Waveforms", zoom_seconds=1.0):
+    _validate_inputs(samples_list, labels)
+
+    self.samples_list = samples_list
+    self.labels = labels if labels is not None else [f"signal {i}" for i in range(len(samples_list))]
+    self.sr = sr
+    self.total_duration = _compute_total_duration(samples_list, sr)
+
+    plot_top, plot_bottom = _build_plot_frames(self)
+
+    # Waveform plot
+    self.fig, self.ax, self._plot_lines = _build_waveform_plot(
+        self, plot_top, samples_list, sr, self.labels, title
+    )
+
+    # FFT plot
+    self.fft_fig, self.fft_ax, self.fft_canvas = _build_fft_plot(self, plot_bottom)
+
+    # Controls
+    top_controls = tk.Frame(self)
+    top_controls.pack(fill=tk.X, padx=6, pady=6)
+
+    _build_playback_controls(self, top_controls, self.labels)
+    _build_window_controls(self, top_controls, zoom_seconds)
+
+    # Hooks area + UI helper
+    self.extras = tk.LabelFrame(self, text="Hooks")
+    self.extras.pack(fill=tk.X, padx=6, pady=6)
+
+    # Expose helpers to the outside world
+    ctx = {
+        "sr": self.sr,
+        "ax": self.ax,
+        "fig": self.fig,
+        "canvas": self.canvas,
+        "fft_ax": self.fft_ax,
+        "fft_fig": self.fft_fig,
+        "fft_canvas": self.fft_canvas,
+        "update_fft": lambda: _update_fft(self, use_visible_window=True),
+        "apply_view": lambda: _apply_view(self),
+        "zoom_var": self.zoom_var,
+        "pos_var": self.pos_var,
+    }
+    self.ui = UI(self, self.extras, ctx)
+
+    # Legend toggle wiring (needs update_fft + recompute hooks)
+    _wire_legend_toggle(self)
+
+    # Initial draw
+    _apply_view(self)
+    _update_fft(self, use_visible_window=True)
+
+
+# -------------------------
+# Helpers
+# -------------------------
+
+def _validate_inputs(samples_list, labels):
     if not isinstance(samples_list, (list, tuple)) or len(samples_list) == 0:
         raise TypeError("samples_list must be a non-empty list/tuple of arrays")
-
-    if labels is None:
-        labels = [f"signal {i}" for i in range(len(samples_list))]
-    if len(labels) != len(samples_list):
+    if labels is not None and len(labels) != len(samples_list):
         raise ValueError("labels must match samples_list length")
 
-    # Store these on the app for callbacks
-    self.samples_list = samples_list
-    self.labels = labels
-    self.sr = sr
 
-    # Compute overall max duration (seconds) across all signals
+def _compute_total_duration(samples_list, sr):
     durations = []
     for s in samples_list:
         s_arr = np.asarray(s)
         n = s_arr.shape[0] if s_arr.ndim >= 1 else 0
         durations.append(n / sr if sr else 0.0)
-    self.total_duration = max(durations) if durations else 0.0
+    return max(durations) if durations else 0.0
 
-    # --- Figure ---
-    self.fig = Figure(figsize=(6, 4), dpi=100)
-    self.ax = self.fig.add_subplot(111)
-    self.ax.set_title(title)
-    self.ax.set_xlabel("Time (seconds)")
-    self.ax.set_ylabel("Amplitude")
 
-    # Plot ALL waveforms overlaid + keep refs for legend toggling
-    self._plot_lines = []  # list of Line2D objects in plot order
+def _build_plot_frames(app):
+    plots = tk.Frame(app)
+    plots.pack(fill=tk.BOTH, expand=True)
+
+    plot_top = tk.Frame(plots)
+    plot_top.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+    plot_bottom = tk.Frame(plots)
+    plot_bottom.pack(side=tk.BOTTOM, fill=tk.X)
+
+    return plot_top, plot_bottom
+
+
+def _build_waveform_plot(app, parent, samples_list, sr, labels, title):
+    fig = Figure(figsize=(6, 4), dpi=100)
+    ax = fig.add_subplot(111)
+    ax.set_title(title)
+    ax.set_xlabel("Time (seconds)")
+    ax.set_ylabel("Amplitude")
+
+    plot_lines = []
     for samples, label in zip(samples_list, labels):
         y = _to_channel_last(samples)
         n_samples, n_channels = y.shape
@@ -199,213 +255,243 @@ def tkinter_figure(
 
         for ch in range(n_channels):
             ch_label = f"{label} (ch {ch})" if n_channels > 1 else label
-            line, = self.ax.plot(t, y[:, ch], label=ch_label)
-            self._plot_lines.append(line)
+            line, = ax.plot(t, y[:, ch], label=ch_label)
+            plot_lines.append(line)
 
-    # Legend + click-to-toggle
-    leg = self.ax.legend(loc="upper right")
+    # Canvas
+    app.canvas = FigureCanvasTkAgg(fig, master=parent)
+    app.canvas.draw()
+    app.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-    # Map legend artists (both line + text) -> original plotted line
-    self._legend_map = {}
+    # Legend (we’ll wire picker later)
+    ax.legend(loc="upper right")
 
-    # Legend lines
-    for leg_line, orig_line in zip(leg.get_lines(), self._plot_lines):
+    return fig, ax, plot_lines
+
+
+def _build_fft_plot(app, parent):
+    fft_fig = Figure(figsize=(6, 2), dpi=100)
+    fft_ax = fft_fig.add_subplot(111)
+    fft_ax.set_xlabel("Frequency (Hz)")
+    fft_ax.set_ylabel("Magnitude (dB)")
+
+    # ✅ log frequency axis
+    fft_ax.set_xscale("log")
+
+    fft_canvas = FigureCanvasTkAgg(fft_fig, master=parent)
+    fft_canvas.draw()
+    fft_canvas.get_tk_widget().pack(fill=tk.X, expand=True)
+
+    return fft_fig, fft_ax, fft_canvas
+
+
+def _build_playback_controls(app, parent, labels):
+    controls = tk.LabelFrame(parent, text="Playback")
+    controls.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 6))
+
+    app.selected_label = tk.StringVar(value=labels[0])
+    tk.Label(controls, text="Play:").pack(side=tk.LEFT, padx=(8, 4), pady=6)
+    tk.OptionMenu(controls, app.selected_label, *labels).pack(side=tk.LEFT, padx=4, pady=6)
+
+    app.selected_channel = tk.IntVar(value=0)
+    tk.Label(controls, text="Channel:").pack(side=tk.LEFT, padx=(12, 4), pady=6)
+    tk.Spinbox(controls, from_=0, to=16, width=3, textvariable=app.selected_channel).pack(
+        side=tk.LEFT, padx=4, pady=6
+    )
+
+    tk.Button(controls, text="Play", command=lambda: _on_play(app)).pack(side=tk.LEFT, padx=8, pady=6)
+    tk.Button(controls, text="Stop", command=stop_audio).pack(side=tk.LEFT, padx=4, pady=6)
+
+
+def _build_window_controls(app, parent, zoom_seconds):
+    sliders = tk.LabelFrame(parent, text="Window")
+    sliders.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(6, 0))
+
+    ZOOM_MIN = 0.001
+    ZOOM_MAX = max(app.total_duration, ZOOM_MIN)
+
+    app.zoom_var = tk.DoubleVar(value=float(zoom_seconds if zoom_seconds is not None else ZOOM_MAX))
+    app.pos_var = tk.DoubleVar(value=0.0)
+
+    # Log zoom slider var
+    app.zoom_var.set(max(ZOOM_MIN, min(float(app.zoom_var.get()), ZOOM_MAX)))
+    app.zoom_log_var = tk.DoubleVar(value=float(np.log10(app.zoom_var.get())))
+
+    tk.Label(sliders, text="Zoom (s):").pack(side=tk.LEFT, padx=(8, 4))
+    app.zoom_slider = tk.Scale(
+        sliders,
+        from_=float(np.log10(ZOOM_MIN)),
+        to=float(np.log10(ZOOM_MAX)),
+        resolution=0.001,
+        orient="horizontal",
+        variable=app.zoom_log_var,
+        command=lambda _v: _on_zoom_slider(app, ZOOM_MIN, ZOOM_MAX),
+        length=150,
+    )
+    app.zoom_slider.pack(side=tk.LEFT, padx=4, pady=6)
+
+    app.zoom_entry_var = tk.StringVar(value=f"{app.zoom_var.get():g}")
+    zoom_entry = tk.Entry(sliders, textvariable=app.zoom_entry_var, width=8)
+    zoom_entry.pack(side=tk.LEFT, padx=(6, 0))
+    zoom_entry.bind("<Return>", lambda _e: _commit_zoom_entry(app, ZOOM_MIN, ZOOM_MAX))
+    zoom_entry.bind("<FocusOut>", lambda _e: _commit_zoom_entry(app, ZOOM_MIN, ZOOM_MAX))
+
+    tk.Label(sliders, text="Pos (s):").pack(side=tk.LEFT, padx=(12, 4))
+    app.pos_slider = tk.Scale(
+        sliders,
+        from_=0.0,
+        to=max(app.total_duration, 0.0),
+        resolution=0.001,
+        orient="horizontal",
+        variable=app.pos_var,
+        command=lambda _v: _apply_view(app),
+        length=150,
+    )
+    app.pos_slider.pack(side=tk.LEFT, padx=4, pady=6)
+
+
+def _on_zoom_slider(app, ZOOM_MIN, ZOOM_MAX):
+    z = 10 ** float(app.zoom_log_var.get())
+    z = max(ZOOM_MIN, min(z, ZOOM_MAX))
+    app.zoom_var.set(z)
+    app.zoom_entry_var.set(f"{z:g}")
+    _apply_view(app)
+
+
+def _commit_zoom_entry(app, ZOOM_MIN, ZOOM_MAX):
+    try:
+        z = float(app.zoom_entry_var.get())
+    except ValueError:
+        app.zoom_entry_var.set(f"{app.zoom_var.get():g}")
+        return
+    z = max(ZOOM_MIN, min(z, ZOOM_MAX))
+    app.zoom_var.set(z)
+    app.zoom_log_var.set(float(np.log10(z)))
+    app.zoom_entry_var.set(f"{z:g}")
+    _apply_view(app)
+
+
+def _apply_view(app):
+    ZOOM_MIN = 0.001
+    ZOOM_MAX = max(app.total_duration, ZOOM_MIN)
+
+    z = float(app.zoom_var.get())
+    z = max(ZOOM_MIN, min(z, ZOOM_MAX))
+    app.zoom_var.set(z)
+
+    max_pos = max(0.0, app.total_duration - z)
+    p = float(app.pos_var.get())
+    p = max(0.0, min(p, max_pos))
+    app.pos_var.set(p)
+
+    app.ax.set_xlim(p, p + z)
+    app.canvas.draw_idle()
+
+    _update_fft(app, use_visible_window=True)
+
+
+def _wire_legend_toggle(app):
+    # Make a fresh legend so we can attach pickers
+    leg = app.ax.legend(loc="upper right")
+    app._legend_map = {}
+
+    for leg_line, orig_line in zip(leg.get_lines(), app._plot_lines):
         leg_line.set_picker(True)
         leg_line.set_pickradius(6)
-        self._legend_map[leg_line] = orig_line
+        app._legend_map[leg_line] = orig_line
 
-    # Legend text (also clickable)
-    for leg_text, orig_line in zip(leg.get_texts(), self._plot_lines):
+    for leg_text, orig_line in zip(leg.get_texts(), app._plot_lines):
         leg_text.set_picker(True)
-        self._legend_map[leg_text] = orig_line
+        app._legend_map[leg_text] = orig_line
 
     def on_pick(event):
         artist = event.artist
-        orig = self._legend_map.get(artist)
+        orig = app._legend_map.get(artist)
         if orig is None:
             return
 
         vis = not orig.get_visible()
         orig.set_visible(vis)
 
-        # Fade matching legend entries (both line + text)
-        # Find which plotted line this corresponds to:
+        # fade legend entry
         try:
-            idx = self._plot_lines.index(orig)
+            idx = app._plot_lines.index(orig)
         except ValueError:
             idx = None
 
         if idx is not None:
-            leg_lines = leg.get_lines()
-            leg_texts = leg.get_texts()
+            if idx < len(leg.get_lines()):
+                leg.get_lines()[idx].set_alpha(1.0 if vis else 0.2)
+            if idx < len(leg.get_texts()):
+                leg.get_texts()[idx].set_alpha(1.0 if vis else 0.2)
 
-            if idx < len(leg_lines):
-                leg_lines[idx].set_alpha(1.0 if vis else 0.2)
-            if idx < len(leg_texts):
-                leg_texts[idx].set_alpha(1.0 if vis else 0.2)
+        app.canvas.draw_idle()
+        _update_fft(app, use_visible_window=True)
 
-        self.canvas.draw_idle()
+        if vis and hasattr(app, "request_recompute"):
+            app.request_recompute()
 
-        # If a line was just enabled, ask the app to recompute
-        if vis and hasattr(self, "request_recompute"):
-            self.request_recompute()
+    app._pick_cid = app.fig.canvas.mpl_connect("pick_event", on_pick)
 
 
-    # Connect pick handler
-    self._pick_cid = self.fig.canvas.mpl_connect("pick_event", on_pick)
+def _update_fft(app, use_visible_window=True):
+    sr = float(app.sr)
+    if sr <= 0:
+        return
 
-    self.canvas = FigureCanvasTkAgg(self.fig, master=self)
-    self.canvas.draw()
-    self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+    app.fft_ax.cla()
+    app.fft_ax.set_xlabel("Frequency (Hz)")
+    app.fft_ax.set_ylabel("Magnitude (dB)")
+    app.fft_ax.set_xscale("log")  # ✅ keep log scale after cla()
 
-    top_controls = tk.Frame(self)
-    top_controls.pack(fill=tk.X, padx=6, pady=6)
+    # choose time range
+    if use_visible_window:
+        x0, x1 = app.ax.get_xlim()
+        i0 = max(0, int(round(x0 * sr)))
+        i1 = max(i0 + 2, int(round(x1 * sr)))
+    else:
+        i0, i1 = 0, None
 
-    # --- Controls row ---
-    controls = tk.LabelFrame(top_controls, text="Playback")
-    controls.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 6))
+    any_plotted = False
 
-    # Dropdown to pick which waveform to play
-    self.selected_label = tk.StringVar(value=labels[0])
-    tk.Label(controls, text="Play:").pack(side=tk.LEFT, padx=(8, 4), pady=6)
-    tk.OptionMenu(controls, self.selected_label, *labels).pack(side=tk.LEFT, padx=4, pady=6)
+    for line in app._plot_lines:
+        if not line.get_visible():
+            continue
 
-    # Channel selector
-    self.selected_channel = tk.IntVar(value=0)
-    tk.Label(controls, text="Channel:").pack(side=tk.LEFT, padx=(12, 4), pady=6)
-    tk.Spinbox(
-        controls, from_=0, to=16, width=3, textvariable=self.selected_channel
-    ).pack(side=tk.LEFT, padx=4, pady=6)
+        y = np.asarray(line.get_ydata(), dtype=np.float64)
+        if i1 is not None:
+            y = y[i0:i1]
 
-    tk.Button(controls, text="Play", command=lambda: _on_play(self)).pack(side=tk.LEFT, padx=8, pady=6)
-    tk.Button(controls, text="Stop", command=stop_audio).pack(side=tk.LEFT, padx=4, pady=6)
+        if y.size < 16:
+            continue
 
-    # --- Sliders row (Position + Zoom) ---
-    sliders = tk.LabelFrame(top_controls, text="Window")
-    sliders.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(6, 0))
+        # window
+        w = np.hanning(y.size)
+        yw = y * w
 
-    # State vars
-    ZOOM_MIN = 0.001  # 1 ms
-    ZOOM_MAX = max(self.total_duration, ZOOM_MIN)
-    
-    self.zoom_var = tk.DoubleVar(
-        value=float(zoom_seconds if zoom_seconds is not None else max(self.total_duration, 1e-3))
-    )
-    self.pos_var = tk.DoubleVar(value=0.0)
+        Y = np.fft.rfft(yw)
+        f = np.fft.rfftfreq(yw.size, d=1.0 / sr)
 
-    def apply_view(*_):
-        # z comes from zoom_var (seconds)
-        z = float(self.zoom_var.get())
-        z = max(ZOOM_MIN, min(z, ZOOM_MAX))
-        self.zoom_var.set(z)
+        mag_db = 20.0 * np.log10(np.abs(Y) + 1e-12)
 
-        max_pos = max(0.0, self.total_duration - z)
-        p = float(self.pos_var.get())
-        p = max(0.0, min(p, max_pos))
-        self.pos_var.set(p)
+        # skip DC for log-axis
+        f = f[1:]
+        mag_db = mag_db[1:]
+        if f.size == 0:
+            continue
 
-        self.ax.set_xlim(p, p + z)
-        self.canvas.draw_idle()
+        app.fft_ax.plot(f, mag_db, label=line.get_label())
+        any_plotted = True
 
-    # --- Log Zoom (slider controls log10(zoom_seconds), entry edits zoom_seconds) ---
-    tk.Label(sliders, text="Zoom (s):").pack(side=tk.LEFT, padx=(8, 4))
+    # log axis can't include 0
+    fmin = 1.0
+    app.fft_ax.set_xlim(fmin, sr / 2.0)
 
-    # real zoom in seconds (already exists)
-    self.zoom_var.set(max(ZOOM_MIN, min(float(self.zoom_var.get()), ZOOM_MAX)))
+    if any_plotted:
+        app.fft_ax.legend(loc="upper right", fontsize=8)
 
-    # slider variable in log space
-    self.zoom_log_var = tk.DoubleVar(value=float(np.log10(self.zoom_var.get())))
-
-    # log slider
-    self.zoom_slider = tk.Scale(
-        sliders,
-        from_=float(np.log10(ZOOM_MIN)),
-        to=float(np.log10(ZOOM_MAX)),
-        resolution=0.001,  # smaller = smoother
-        orient="horizontal",
-        variable=self.zoom_log_var,
-        command=lambda _v: _on_zoom_slider(),
-        length=150,
-    )
-    self.zoom_slider.pack(side=tk.LEFT, padx=4, pady=6)
-
-    # entry tied to zoom_var (seconds)
-    self.zoom_entry_var = tk.StringVar(value=f"{self.zoom_var.get():g}")
-    zoom_entry = tk.Entry(sliders, textvariable=self.zoom_entry_var, width=8)
-    zoom_entry.pack(side=tk.LEFT, padx=(6, 0))
-
-    def _clamp_zoom(z):
-        return max(ZOOM_MIN, min(float(z), ZOOM_MAX))
-
-    def _sync_zoom_entry():
-        self.zoom_entry_var.set(f"{self.zoom_var.get():g}")
-
-    def _sync_zoom_slider_from_zoom():
-        # set slider based on zoom_var
-        z = _clamp_zoom(self.zoom_var.get())
-        self.zoom_var.set(z)
-        self.zoom_log_var.set(float(np.log10(z)))
-
-    def _on_zoom_slider():
-        # slider changed -> update zoom_var (seconds)
-        z = 10 ** float(self.zoom_log_var.get())
-        self.zoom_var.set(_clamp_zoom(z))
-        _sync_zoom_entry()
-        apply_view()
-
-    def _commit_zoom_entry(_event=None):
-        # entry changed -> update zoom_var + slider
-        try:
-            z = float(self.zoom_entry_var.get())
-        except ValueError:
-            _sync_zoom_entry()
-            return
-        self.zoom_var.set(_clamp_zoom(z))
-        _sync_zoom_slider_from_zoom()
-        apply_view()
-
-    zoom_entry.bind("<Return>", _commit_zoom_entry)
-    zoom_entry.bind("<FocusOut>", _commit_zoom_entry)
-
-    # initialize consistency
-    _sync_zoom_slider_from_zoom()
-    _sync_zoom_entry()
-
-    # Position slider
-    tk.Label(sliders, text="Pos (s):").pack(side=tk.LEFT, padx=(12, 4))
-    self.pos_slider = tk.Scale(
-        sliders,
-        from_=0.0,
-        to=max(self.total_duration, 0.0),
-        resolution=0.001,
-        orient="horizontal",
-        variable=self.pos_var,
-        command=lambda _v: apply_view(),
-        length=150,
-    )
-    self.pos_slider.pack(side=tk.LEFT, padx=4, pady=6)
-
-    # Initialize view
-    apply_view()
-
-    # --- Extras area for inline UI variables ---
-    self.extras = tk.LabelFrame(self, text="Hooks")
-    self.extras.pack(fill=tk.X, padx=6, pady=6)
-
-    ctx = {
-        "sr": self.sr,
-        "samples_list": self.samples_list,
-        "labels": self.labels,
-        "ax": self.ax,
-        "fig": self.fig,
-        "canvas": self.canvas,
-        "apply_view": apply_view,
-        "zoom_var": self.zoom_var,
-        "pos_var": self.pos_var,
-    }
-
-    self.ui = UI(self, self.extras, ctx)
-
+    app.fft_fig.tight_layout()
+    app.fft_canvas.draw_idle()
 
 def _on_play(app):
     label = app.selected_label.get()
@@ -416,3 +502,4 @@ def _on_play(app):
 
     y = app._plot_lines[idx].get_ydata()
     play_audio(y, app.sr, blocking=False)
+

@@ -53,6 +53,7 @@ class WaveformApp(tk.Tk):
         self._recompute_job = None
         self.sample_frequency.trace_add("write", lambda *_: self.request_recompute())
         self.recompute()
+        
 
     def request_recompute(self):
         if self._recompute_job is not None:
