@@ -47,6 +47,7 @@ class WaveformApp(tk.Tk):
             step=0.1,
             label="Sample Frequency (Hz)",
             length=600,
+            log=True,
         )
 
         self._recompute_job = None

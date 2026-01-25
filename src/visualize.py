@@ -17,7 +17,19 @@ class UI:
         r.pack(fill=tk.X, padx=6, pady=4)
         return r
 
-    def bind_slider(self, name, from_, to, value, *, step=0.1, label=None, length=300):
+    def bind_slider(
+        self,
+        name,
+        from_,
+        to,
+        value,
+        *,
+        step=0.1,
+        label=None,
+        length=300,
+        log=False,              # NEW: log slider option
+        entry_width=10,         # NEW: nicer entry
+    ):
         r = self.row()
         if label is None:
             label = name
@@ -25,54 +37,111 @@ class UI:
         lo = float(from_)
         hi = float(to)
 
+        # For log sliders, the range must be > 0
+        if log:
+            lo = max(lo, 1e-12)
+            hi = max(hi, lo * 1.000001)
+            value = max(float(value), lo)
+
         tk.Label(r, text=f"{label}:").pack(side=tk.LEFT)
 
+        # "real" value variable (always linear space)
         var = tk.DoubleVar(value=float(value))
-        setattr(self.app, name, var)  # app.sample_frequency etc
+        setattr(self.app, name, var)
+
+        # A tiny sub-frame for slider + entry so the entry never feels cramped
+        inner = tk.Frame(r)
+        inner.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6)
+
+        # --- Slider variable ---
+        if log:
+            # slider controls log10(value)
+            slider_var = tk.DoubleVar(value=float(np.log10(var.get())))
+            slider_from = float(np.log10(lo))
+            slider_to = float(np.log10(hi))
+            slider_res = 0.001  # log slider smoothness
+        else:
+            slider_var = var
+            slider_from = lo
+            slider_to = hi
+            slider_res = float(step)
 
         slider = tk.Scale(
-            r,
-            from_=lo,
-            to=hi,
-            resolution=float(step),
+            inner,
+            from_=slider_from,
+            to=slider_to,
+            resolution=slider_res,
             orient="horizontal",
-            variable=var,
+            variable=slider_var,
             length=length,
+            showvalue=False,   # nicer since entry shows the value
         )
-        slider.pack(side=tk.LEFT, padx=6)
+        slider.pack(side=tk.LEFT, fill=tk.X, expand=True)
         setattr(self.app, f"{name}_slider", slider)
 
-        # --- Entry box bound to the same variable ---
-        entry_var = tk.StringVar(value=str(var.get()))
-        entry = tk.Entry(r, textvariable=entry_var, width=8)
-        entry.pack(side=tk.LEFT, padx=(6, 0))
+        # --- Better Entry box (bigger hitbox, always clickable) ---
+        entry_frame = tk.Frame(inner, padx=4)
+        entry_frame.pack(side=tk.LEFT)
+
+        entry_var = tk.StringVar(value=f"{var.get():g}")
+        entry = tk.Entry(
+            entry_frame,
+            textvariable=entry_var,
+            width=entry_width,
+            takefocus=True,
+            bd=2,              # more clickable border
+            relief="groove",
+            justify="right",
+        )
+        entry.pack(side=tk.LEFT)
+        setattr(self.app, f"{name}_entry", entry)
 
         def clamp(v):
             return max(lo, min(hi, v))
 
-        def sync_entry(*_):
-            # update entry text whenever slider/var changes
+        def sync_entry():
             entry_var.set(f"{var.get():g}")
 
-        def commit_entry(_event=None):
-            # when user types a value, set the variable (moves slider)
+        def set_var_from_entry():
             try:
                 v = float(entry_var.get())
             except ValueError:
                 sync_entry()
                 return
-            var.set(clamp(v))
+            v = clamp(v)
+            var.set(v)
+
+            if log:
+                slider_var.set(float(np.log10(v)))
+
             sync_entry()
 
-        # When var changes (slider moved), update entry
+        def set_var_from_slider():
+            if log:
+                v = 10 ** float(slider_var.get())
+                v = clamp(v)
+                var.set(v)
+            # if not log, slider_var is var already
+            sync_entry()
+
+        # Slider movement updates var + entry
+        slider.configure(command=lambda _v: set_var_from_slider())
+
+        # Entry commit
+        entry.bind("<Return>", lambda _e: set_var_from_entry())
+        entry.bind("<FocusOut>", lambda _e: set_var_from_entry())
+
+        # Make clicking anywhere near the entry focus it (helps the “hard to click” feeling)
+        entry_frame.bind("<Button-1>", lambda _e: entry.focus_set())
+        entry.bind("<Button-1>", lambda _e: entry.focus_set())
+
+        # If var changes externally (rare), keep entry in sync
         var.trace_add("write", lambda *_: sync_entry())
 
-        # When user hits enter or leaves entry, commit
-        entry.bind("<Return>", commit_entry)
-        entry.bind("<FocusOut>", commit_entry)
-
-        # initialize
+        # Initialize consistency
         sync_entry()
+        if log:
+            slider_var.set(float(np.log10(var.get())))
 
         return var
 
