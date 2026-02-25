@@ -15,6 +15,14 @@ class WaveformApp(tk.Tk):
 
         y, sr, path = select_file()
 
+        # If stereo (or multi-channel), convert to mono
+        if y.ndim == 2:
+            # common layouts are (channels, samples) or (samples, channels)
+            if y.shape[0] <= 8 and y.shape[0] < y.shape[1]:
+                y = y.mean(axis=0)      # (channels, samples) -> (samples,)
+            else:
+                y = y.mean(axis=1)      # (samples, channels) -> (samples,)
+
         self.y = y
         self.sr = sr
 
