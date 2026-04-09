@@ -1,46 +1,33 @@
 import numpy as np
 
-def sinc_reconstruction(y, sr, Fs, taps=64):
-    """
-    Approximate ideal sinc reconstruction from samples taken at Fs,
-    reconstructing at sr. Uses a windowed sinc kernel with 'taps'.
-    """
+from debug.timer import time_method
+
+@time_method(0.05)
+def sinc_reconstruction(y, sr, Fs, taps=64, block_size=2048):
     y = np.asarray(y, dtype=np.float64)
     n = len(y)
 
-    # sample indices and values
     k = np.arange(int(np.ceil((n / sr) * Fs)))
     sample_idx = np.round(k * sr / Fs).astype(int)
     sample_idx = np.clip(sample_idx, 0, n - 1)
     sample_idx = np.unique(sample_idx)
     s = y[sample_idx]
 
-    # output positions
-    t = np.arange(n) / sr  # seconds
-
-    out = np.zeros(n, dtype=np.float64)
-
-    # window (Hann)
+    out = np.empty(n, dtype=np.float64)
+    offsets = np.arange(-taps, taps + 1)
     win = np.hanning(2 * taps + 1)
 
-    # for each output sample, sum nearby sinc contributions
-    # (not the fastest, but straightforward)
-    for i in range(n):
-        ti = t[i]
-        # nearest sample index in k-domain
-        k0 = int(round(ti * Fs))
+    for start in range(0, n, block_size):
+        stop = min(n, start + block_size)
 
-        k_start = max(0, k0 - taps)
-        k_end   = min(len(s) - 1, k0 + taps)
+        i = np.arange(start, stop)
+        tFs = i * (Fs / sr)                 # output time in sample-domain
+        k0 = np.rint(tFs).astype(int)
 
-        kk = np.arange(k_start, k_end + 1)
-        # time difference from each sample
-        tau = ti - (kk / Fs)
-        # sinc argument
-        xarg = Fs * tau
-        # window slice aligned to kk range
-        w = win[(kk - (k0 - taps))]
+        kk = k0[:, None] + offsets[None, :]
+        kk = np.clip(kk, 0, len(s) - 1)
 
-        out[i] = np.sum(s[kk] * np.sinc(xarg) * w)
+        xarg = tFs[:, None] - kk
+        out[start:stop] = np.sum(s[kk] * np.sinc(xarg) * win[None, :], axis=1)
 
     return out
