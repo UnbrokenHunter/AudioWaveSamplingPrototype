@@ -1,25 +1,21 @@
 import numpy as np
 
+from debug.timer import time_method
+
+@time_method(0.05)
 def zoh_hold_from_indices(y, idx):
-    """
-    Zero-Order Hold (sample-and-hold) reconstruction at the original sample rate.
-    idx: sample indices (ascending) where the DAC updates its held value.
-    """
     y = np.asarray(y)
     n = len(y)
 
     idx = np.asarray(idx, dtype=int)
     idx = np.clip(idx, 0, n - 1)
     idx = np.unique(idx)
+
     if idx.size == 0:
         return np.zeros_like(y)
 
-    out = np.zeros_like(y)
-    # Hold each sample value until next sample index
-    for a, b in zip(idx[:-1], idx[1:]):
-        out[a:b] = y[a]
-    out[idx[-1]:] = y[idx[-1]]
-    return out
+    lengths = np.diff(np.r_[idx, n])
+    return np.repeat(y[idx], lengths)
 
 
 def one_pole_lowpass(x, sr, cutoff_hz):
