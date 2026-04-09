@@ -35,14 +35,16 @@ class WaveformApp(tk.Tk):
                 np.zeros_like(y),
                 np.zeros_like(y),
                 np.zeros_like(y),
+                np.zeros_like(y),
             ],
             sr,
             labels=[
                 "original", 
                 "direct reconstruction", 
                 "linear reconstruction", 
-                "sinc reconstruction",
                 "dac reconstruction",
+                "sinc reconstruction",
+                "sinc reconstruction (lowpassed)",
                 "direct subtract",
             ],
             title=str(path),
@@ -82,8 +84,9 @@ class WaveformApp(tk.Tk):
         recon_fns = {
             "direct reconstruction": lambda: direct_reconstruction(y, idx),
             "linear reconstruction": lambda: linear_reconstruction(y, idx),
-            "sinc reconstruction": lambda: sinc_reconstruction(y, sr, fs),
             "dac reconstruction": lambda: dac_reconstruction(y, idx, sr, fs),
+            "sinc reconstruction": lambda: sinc_reconstruction(y, sr, fs),
+            "sinc reconstruction (lowpassed)": lambda: sinc_reconstruction_reference(y, sr, fs),
             "direct subtract": lambda: subtract_direct_reconstruction(y, idx),
         }
 
