@@ -270,21 +270,32 @@ def _visible_window_cache_key(app):
 
 
 def _get_visible_signal_windows(app):
-    sr = float(app.sr)
-    x0, x1 = app.ax.get_xlim()
-    i0 = max(0, int(round(x0 * sr)))
-    i1 = max(i0 + 2, int(round(x1 * sr)))
-
     out = []
+
+    follow_view = bool(app.spec_follow_view.get())
+
+    if follow_view:
+        sr = float(app.sr)
+        x0, x1 = app.ax.get_xlim()
+        i0 = max(0, int(round(x0 * sr)))
+        i1 = max(i0 + 2, int(round(x1 * sr)))
+
     for line in app._plot_lines:
         if not line.get_visible():
             continue
 
         label = line.get_label()
         y = np.asarray(app.signal_data[label], dtype=np.float64).reshape(-1)
-        out.append((line, y[i0:i1]))
+
+        if follow_view:
+            y_view = y[i0:i1]
+        else:
+            y_view = y
+
+        out.append((line, y_view))
 
     return out
+
 
 @time_method(0.05)
 def request_bottom_update(app, delay_ms=80):
