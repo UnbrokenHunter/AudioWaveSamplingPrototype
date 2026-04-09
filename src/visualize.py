@@ -10,6 +10,7 @@ import matplotlib.ticker as mticker
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 import matplotlib.cm as cm
 
+from debug.timer import time_method
 from playback import play_audio, stop_audio
 
 
@@ -606,6 +607,7 @@ def _update_bottom_plot(app):
         _update_stft_3d(app)
 
 
+@time_method(0.05)
 def _update_fft_2d(app):
     sr = float(app.sr)
     if sr <= 0:
@@ -628,7 +630,18 @@ def _update_fft_2d(app):
             continue
 
         # window
-        w = np.hanning(y.size)
+        if not hasattr(app, "_hann_cache"):
+            app._hann_cache = {}
+
+        def get_hann(app, n):
+            w = app._hann_cache.get(n)
+            if w is None:
+                w = np.hanning(n)
+                app._hann_cache[n] = w
+            return w
+        
+        w = get_hann(app, y.size)
+
         yw = y * w
 
         Y = np.fft.rfft(yw)
