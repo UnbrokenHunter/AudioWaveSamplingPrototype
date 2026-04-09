@@ -29,6 +29,7 @@ class UI:
         r.pack(fill=tk.X, padx=6, pady=4)
         return r
 
+    @time_method(0.05)
     def bind_slider(
         self,
         name,
@@ -193,6 +194,7 @@ def _db(x):
 # FFT / STFT helpers
 # ============================================================
 
+@time_method(0.05)
 def stft_mag_db(y, sr, n_fft=1024, hop=256):
     """
     Returns:
@@ -220,18 +222,71 @@ def stft_mag_db(y, sr, n_fft=1024, hop=256):
     return f, t, S_db
 
 
-def _slice_visible_window(app, y):
-    sr = float(app.sr)
-    use_visible_window = bool(app.spec_follow_view.get())
-    if not use_visible_window:
-        return y
+def _visible_sample_bounds(app):
+    if not bool(app.spec_follow_view.get()):
+        return None
 
+    sr = float(app.sr)
     x0, x1 = app.ax.get_xlim()
     i0 = max(0, int(round(x0 * sr)))
     i1 = max(i0 + 2, int(round(x1 * sr)))
+    return i0, i1
+
+
+def _slice_visible_window(app, y):
+    bounds = _visible_sample_bounds(app)
+    if bounds is None:
+        return y
+    i0, i1 = bounds
     return y[i0:i1]
 
 
+def _visible_window_cache_key(app):
+    bounds = _visible_sample_bounds(app)
+    if bounds is None:
+        bounds_key = None
+    else:
+        bounds_key = tuple(bounds)
+
+    return (
+        bounds_key,
+        tuple(
+            (label, bool(app.lines_by_label[label].get_visible()))
+            for label in app.labels
+        ),
+        tuple(
+            id(app.signal_data[label])
+            for label in app.labels
+        ),
+    )
+
+
+def _get_visible_signal_windows(app):
+    key = _visible_window_cache_key(app)
+    cached = getattr(app, "_visible_window_cache", None)
+    if cached is not None and cached["key"] == key:
+        return cached["windows"]
+
+    bounds = _visible_sample_bounds(app)
+    windows = []
+    for label in app.labels:
+        line = app.lines_by_label.get(label)
+        if line is None or not line.get_visible():
+            continue
+
+        y = np.asarray(app.signal_data[label], dtype=np.float64).reshape(-1)
+        if bounds is not None:
+            i0, i1 = bounds
+            y = y[i0:i1]
+        windows.append((label, y))
+
+    app._visible_window_cache = {
+        "key": key,
+        "windows": windows,
+    }
+    return windows
+
+@time_method(0.05)
 def request_bottom_update(app, delay_ms=80):
     if app.bottom_mode.get() == "OFF":
         return
@@ -244,20 +299,27 @@ def request_bottom_update(app, delay_ms=80):
 # ============================================================
 # Tkinter figure builder
 # ============================================================
-
+@time_method(0.05)
 def tkinter_figure(self, samples_list, sr, labels=None, title="Waveforms", zoom_seconds=1.0):
-    if not isinstance(samples_list, (list, tuple)) or len(samples_list) == 0:
-        raise TypeError("samples_list must be a non-empty list/tuple of arrays")
+    if isinstance(samples_list, dict):
+        if labels is None:
+            labels = list(samples_list.keys())
+        signal_data = {label: np.asarray(samples_list[label]) for label in labels}
+    else:
+        if not isinstance(samples_list, (list, tuple)) or len(samples_list) == 0:
+            raise TypeError("samples_list must be a non-empty list/tuple of arrays")
+        if labels is None:
+            labels = [f"signal {i}" for i in range(len(samples_list))]
+        if len(labels) != len(samples_list):
+            raise ValueError("labels must match samples_list length")
+        signal_data = {label: np.asarray(samples) for label, samples in zip(labels, samples_list)}
 
-    if labels is None:
-        labels = [f"signal {i}" for i in range(len(samples_list))]
-    if len(labels) != len(samples_list):
-        raise ValueError("labels must match samples_list length")
-
-    self.samples_list = samples_list
-    self.labels = labels
+    self.signal_data = signal_data
+    self.labels = list(labels)
+    self.samples_list = [self.signal_data[label] for label in self.labels]
     self.sr = sr
-    self.total_duration = _compute_total_duration(samples_list, sr)
+    self.total_duration = _compute_total_duration(self.samples_list, sr)
+    self._visible_window_cache = None
 
     # --- layout frames (plots stacked: waveform on top, bottom viz below) ---
     plots = tk.Frame(self)
@@ -279,8 +341,8 @@ def tkinter_figure(self, samples_list, sr, labels=None, title="Waveforms", zoom_
     self.ax.set_ylabel("Amplitude")
 
     self._plot_lines = []
-    for samples, label in zip(samples_list, labels):
-        y = _to_channel_last(samples)
+    for label in self.labels:
+        y = _to_channel_last(self.signal_data[label])
         n_samples, n_channels = y.shape
         t = np.arange(n_samples) / float(sr)
 
@@ -422,6 +484,7 @@ def _show_bottom_area(app):
         app.bottom_toolbar.pack(side=tk.BOTTOM, fill=tk.X)
 
 
+@time_method(0.05)
 def _build_window_controls(app, parent, zoom_seconds):
     sliders = tk.LabelFrame(parent, text="Window")
     sliders.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(6, 0))
@@ -524,6 +587,7 @@ def _apply_view(app):
     app.pos_var.set(p)
 
     app.ax.set_xlim(p, p + z)
+    app._visible_window_cache = None
     app.canvas.draw_idle()
 
     # bottom plot follows view (debounced)
@@ -563,6 +627,7 @@ def _wire_legend_toggle(app):
             if idx < len(leg.get_texts()):
                 leg.get_texts()[idx].set_alpha(1.0 if vis else 0.2)
 
+        app._visible_window_cache = None
         app.canvas.draw_idle()
 
         # update bottom
@@ -619,12 +684,7 @@ def _update_fft_2d(app):
 
     any_plotted = False
 
-    for line in app._plot_lines:
-        if not line.get_visible():
-            continue
-
-        y = np.asarray(line.get_ydata(), dtype=np.float64).reshape(-1)
-        y = _slice_visible_window(app, y)
+    for label, y in _get_visible_signal_windows(app):
 
         if y.size < 16:
             continue
@@ -641,7 +701,6 @@ def _update_fft_2d(app):
             return w
         
         w = get_hann(app, y.size)
-
         yw = y * w
 
         Y = np.fft.rfft(yw)
@@ -651,7 +710,7 @@ def _update_fft_2d(app):
         if app.fft_db.get():
             mag = _db(mag)
 
-        app.fft_ax.plot(f, mag, label=line.get_label())
+        app.fft_ax.plot(f, mag, label=label)
         any_plotted = True
 
     if app.fft_log_x.get():
@@ -701,7 +760,7 @@ def _update_fft_2d(app):
 def _log_freq(f, fmin):
     return np.log10(np.maximum(f, float(fmin)))
 
-
+@time_method(0.05)
 def _update_stft_3d(app):
     sr = float(app.sr)
     if sr <= 0:
@@ -712,8 +771,8 @@ def _update_stft_3d(app):
     app.spec_ax.set_ylabel("Signal")
     app.spec_ax.set_zlabel("Frequency (Hz)" + (" (log)" if app.stft_log_freq.get() else ""))
 
-    visible_lines = [ln for ln in app._plot_lines if ln.get_visible()]
-    if not visible_lines:
+    visible_windows = _get_visible_signal_windows(app)
+    if not visible_windows:
         app.spec_canvas.draw_idle()
         return
 
@@ -727,9 +786,9 @@ def _update_stft_3d(app):
 
     any_drawn = False
 
-    for si, line in enumerate(visible_lines):
-        y = np.asarray(line.get_ydata(), dtype=np.float64).reshape(-1)
-        y = _slice_visible_window(app, y)
+    plotted_labels = []
+
+    for si, (label, y) in enumerate(visible_windows):
 
         if y.size < 32:
             continue
@@ -779,11 +838,12 @@ def _update_stft_3d(app):
             antialiased=False,
             shade=False,
         )
+        plotted_labels.append(label)
         any_drawn = True
 
     # stacked labels
-    app.spec_ax.set_yticks(range(len(visible_lines)))
-    app.spec_ax.set_yticklabels([ln.get_label() for ln in visible_lines], fontsize=8)
+    app.spec_ax.set_yticks(range(len(plotted_labels)))
+    app.spec_ax.set_yticklabels(plotted_labels, fontsize=8)
 
     # If log axis, put nice Hz tick labels
     if app.stft_log_freq.get():
@@ -838,5 +898,5 @@ def _on_play(app):
     except ValueError:
         idx = 0
 
-    y = np.asarray(app._plot_lines[idx].get_ydata(), dtype=np.float32).reshape(-1)
+    y = np.asarray(app.signal_data[app.labels[idx]], dtype=np.float32).reshape(-1)
     play_audio(y, app.sr, blocking=False)

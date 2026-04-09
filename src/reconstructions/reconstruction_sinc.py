@@ -52,7 +52,7 @@ def lowpass_for_sampling(y, sr, Fs, transition_ratio=0.90, order=8):
     return sosfiltfilt(sos, y)
 
 @time_method(0.05)
-def sinc_reconstruction_reference(y, sr, Fs):
+def sinc_reconstruction_lowpassed(y, sr, Fs):
     """
     Theory-oriented sinc reconstruction:
       1) anti-alias

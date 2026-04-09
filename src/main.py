@@ -23,35 +23,36 @@ class WaveformApp(tk.Tk):
             else:
                 y = y.mean(axis=1)      # (samples, channels) -> (samples,)
 
-        self.y = y
+        self.y = np.asarray(y, dtype=np.float64)
         self.sr = sr
+
+        self.signal_labels = [
+            "original",
+            "direct reconstruction",
+            "linear reconstruction",
+            "dac reconstruction",
+            "sinc reconstruction",
+            "sinc reconstruction (lowpassed)",
+            "direct subtract",
+        ]
+        self.signal_data = {
+            "original": self.y,
+            "direct reconstruction": np.zeros_like(self.y),
+            "linear reconstruction": np.zeros_like(self.y),
+            "dac reconstruction": np.zeros_like(self.y),
+            "sinc reconstruction": np.zeros_like(self.y),
+            "sinc reconstruction (lowpassed)": np.zeros_like(self.y),
+            "direct subtract": np.zeros_like(self.y),
+        }
 
         tkinter_figure(
             self,
-            [
-                y, 
-                np.zeros_like(y), 
-                np.zeros_like(y), 
-                np.zeros_like(y),
-                np.zeros_like(y),
-                np.zeros_like(y),
-                np.zeros_like(y),
-            ],
+            self.signal_data,
             sr,
-            labels=[
-                "original", 
-                "direct reconstruction", 
-                "linear reconstruction", 
-                "dac reconstruction",
-                "sinc reconstruction",
-                "sinc reconstruction (lowpassed)",
-                "direct subtract",
-            ],
+            labels=self.signal_labels,
             title=str(path),
             zoom_seconds=0.01
         )
-
-        self.lines_by_label = {line.get_label(): line for line in self._plot_lines}
 
         self.sample_frequency = self.ui.bind_slider(
             "sample_frequency",
@@ -72,6 +73,7 @@ class WaveformApp(tk.Tk):
             self.after_cancel(self._recompute_job)
         self._recompute_job = self.after(40, self.recompute)
 
+    @time_method(0.05)
     def recompute(self):
         self._recompute_job = None
 
@@ -86,21 +88,25 @@ class WaveformApp(tk.Tk):
             "linear reconstruction": lambda: linear_reconstruction(y, idx),
             "dac reconstruction": lambda: dac_reconstruction(y, idx, sr, fs),
             "sinc reconstruction": lambda: sinc_reconstruction(y, sr, fs),
-            "sinc reconstruction (lowpassed)": lambda: sinc_reconstruction_reference(y, sr, fs),
+            "sinc reconstruction (lowpassed)": lambda: sinc_reconstruction_lowpassed(y, sr, fs),
             "direct subtract": lambda: subtract_direct_reconstruction(y, idx),
         }
 
         for label, fn in recon_fns.items():
-            line = self.lines_by_label[label]  # (we’ll create this mapping below)
+            line = self.lines_by_label[label]
             if not line.get_visible():
                 continue
-            line.set_ydata(fn())
+            values = np.asarray(fn(), dtype=np.float64)
+            self.signal_data[label] = values
+            line.set_ydata(values)
+
+        self._visible_window_cache = None
 
         request_bottom_update(self)
 
         self.ui.ctx["canvas"].draw_idle()
 
-
+@time_method(0.05)
 def sample_indices(n, sr, fs):
     k = np.arange(int(np.ceil((n / sr) * fs)))
     idx = np.round(k * sr / fs).astype(int)
