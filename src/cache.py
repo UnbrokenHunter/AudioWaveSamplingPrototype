@@ -56,8 +56,8 @@ class ReconstructionCacheManager:
 
     @staticmethod
     def fs_cache_key(fs):
-        return float(f"{float(fs):.12g}")
-
+        return round(float(fs), 3)
+    
     def get_sample_indices(self, fs):
         key = self.fs_cache_key(fs)
         idx = self.idx_cache.get(key)
