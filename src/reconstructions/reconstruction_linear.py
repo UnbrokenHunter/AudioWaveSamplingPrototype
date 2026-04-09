@@ -1,25 +1,18 @@
 import numpy as np
 
+from debug.timer import time_method
+
+@time_method(threshold=0.05)
 def linear_reconstruction(y, idx):
-    """Piecewise linear interpolation between sample points."""
-    out = np.zeros_like(y)
+    y = np.asarray(y)
+    idx = np.asarray(idx, dtype=int)
 
-    if len(idx) == 0:
+    if idx.size == 0:
+        return np.zeros_like(y)
+    if idx.size == 1:
+        out = np.empty_like(y, dtype=np.float64)
+        out.fill(y[idx[0]])
         return out
-    if len(idx) == 1:
-        out[idx[0]] = y[idx[0]]
-        return out
 
-    # Fill each segment between consecutive sampled points
-    for a, b in zip(idx[:-1], idx[1:]):
-        ya, yb = y[a], y[b]
-        span = b - a
-        if span <= 0:
-            continue
-        t = np.arange(span + 1) / span  # 0..1
-        out[a:b + 1] = ya + (yb - ya) * t
-
-    # (optional) hold ends instead of zero
-    out[:idx[0]] = y[idx[0]]
-    out[idx[-1]:] = y[idx[-1]]
-    return out
+    x = np.arange(len(y))
+    return np.interp(x, idx, y[idx])
