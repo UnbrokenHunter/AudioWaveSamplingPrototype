@@ -43,6 +43,7 @@ class ReconstructionCacheManager:
             "direct reconstruction": 30,
             "linear reconstruction": 30,
             "nearest reconstruction": 30,
+            "cubic reconstruction": 30,
             "dac reconstruction": 30,
             "sinc reconstruction": 30,
             "sinc reconstruction (lowpassed)": 30,

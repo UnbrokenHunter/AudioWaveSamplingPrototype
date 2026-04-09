@@ -3,3 +3,4 @@ from reconstructions.reconstruction_linear import linear_reconstruction
 from reconstructions.reconstruction_sinc import sinc_reconstruction, sinc_reconstruction_lowpassed
 from reconstructions.reconstruction_dac import dac_reconstruction
 from reconstructions.reconstruction_nearest import nearest_reconstruction
+from reconstructions.reconstruction_cubic import cubic_reconstruction
