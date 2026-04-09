@@ -115,12 +115,16 @@ class UI:
         def clamp(v):
             return max(lo, min(hi, float(v)))
 
-        # prevent "fighting" while typing
         editing = {"active": False}
 
         def sync_entry():
             if not editing["active"]:
                 entry_var.set(f"{var.get():g}")
+
+        def begin_edit(_event=None):
+            editing["active"] = True
+            entry.after_idle(entry.focus_force)
+            return None
 
         def set_from_slider():
             if log:
@@ -135,24 +139,28 @@ class UI:
                 v = float(entry_var.get())
             except ValueError:
                 sync_entry()
-                return
+                return None
 
             v = clamp(v)
             var.set(v)
             if log:
                 slider_var.set(float(np.log10(v)))
-            sync_entry()
+            entry_var.set(f"{var.get():g}")
+            return None
 
-        def begin_edit(_event=None):
-            editing["active"] = True
-            entry.focus_set()
-            entry.selection_range(0, tk.END)
-            return None  # allow normal click selection too
+        def cancel_entry(_event=None):
+            editing["active"] = False
+            sync_entry()
+            return "break"
 
         slider.configure(command=lambda _v: set_from_slider())
-        entry.bind("<Button-1>", begin_edit)
+        entry.bind("<Button-1>", begin_edit, add="+")
+        entry.bind("<FocusIn>", begin_edit, add="+")
+        entry.bind("<KeyPress>", begin_edit, add="+")
         entry.bind("<Return>", commit_entry)
+        entry.bind("<KP_Enter>", commit_entry)
         entry.bind("<FocusOut>", commit_entry)
+        entry.bind("<Escape>", cancel_entry)
 
         var.trace_add("write", lambda *_: sync_entry())
 
