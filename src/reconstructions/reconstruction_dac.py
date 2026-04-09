@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.signal import lfilter
 
 from debug.timer import time_method
 
@@ -17,28 +18,22 @@ def zoh_hold_from_indices(y, idx):
     lengths = np.diff(np.r_[idx, n])
     return np.repeat(y[idx], lengths)
 
-
+@time_method(threshold=0.05)
 def one_pole_lowpass(x, sr, cutoff_hz):
-    """
-    1st-order RC low-pass filter (analog-ish).
-    """
     x = np.asarray(x, dtype=np.float64)
-    y = np.zeros_like(x)
 
-    cutoff_hz = float(cutoff_hz)
     if cutoff_hz <= 0:
-        return y
+        return np.zeros_like(x)
 
     dt = 1.0 / float(sr)
     rc = 1.0 / (2.0 * np.pi * cutoff_hz)
     alpha = dt / (rc + dt)
 
-    y[0] = x[0]
-    for n in range(1, len(x)):
-        y[n] = y[n - 1] + alpha * (x[n] - y[n - 1])
-    return y
+    b = [alpha]
+    a = [1.0, -(1.0 - alpha)]
+    return lfilter(b, a, x)
 
-
+@time_method(threshold=0.05)
 def dac_reconstruction(y, idx, sr, fs, cutoff_hz=None, poles=2):
     """
     "Genuine-ish" DAC reconstruction:
