@@ -262,29 +262,21 @@ def _visible_window_cache_key(app):
 
 
 def _get_visible_signal_windows(app):
-    key = _visible_window_cache_key(app)
-    cached = getattr(app, "_visible_window_cache", None)
-    if cached is not None and cached["key"] == key:
-        return cached["windows"]
+    sr = float(app.sr)
+    x0, x1 = app.ax.get_xlim()
+    i0 = max(0, int(round(x0 * sr)))
+    i1 = max(i0 + 2, int(round(x1 * sr)))
 
-    bounds = _visible_sample_bounds(app)
-    windows = []
-    for label in app.labels:
-        line = app.lines_by_label.get(label)
-        if line is None or not line.get_visible():
+    out = []
+    for line in app._plot_lines:
+        if not line.get_visible():
             continue
 
+        label = line.get_label()
         y = np.asarray(app.signal_data[label], dtype=np.float64).reshape(-1)
-        if bounds is not None:
-            i0, i1 = bounds
-            y = y[i0:i1]
-        windows.append((label, y))
+        out.append((line, y[i0:i1]))
 
-    app._visible_window_cache = {
-        "key": key,
-        "windows": windows,
-    }
-    return windows
+    return out
 
 @time_method(0.05)
 def request_bottom_update(app, delay_ms=80):
@@ -684,7 +676,7 @@ def _update_fft_2d(app):
 
     any_plotted = False
 
-    for label, y in _get_visible_signal_windows(app):
+    for line, y in _get_visible_signal_windows(app):
 
         if y.size < 16:
             continue
@@ -710,7 +702,12 @@ def _update_fft_2d(app):
         if app.fft_db.get():
             mag = _db(mag)
 
-        app.fft_ax.plot(f, mag, label=label)
+        app.fft_ax.plot(
+            f,
+            mag,
+            label=line.get_label(),
+            color=line.get_color(),
+        )
         any_plotted = True
 
     if app.fft_log_x.get():
