@@ -175,13 +175,9 @@ class UI:
 # Array helpers
 # ============================================================
 
-def _to_channel_last(samples):
+def _to_mono(samples):
     samples = np.asarray(samples)
-    if samples.ndim == 1:
-        return samples[:, None]
-    if samples.shape[0] in (1, 2) and samples.shape[0] < samples.shape[1]:
-        return samples.T
-    return samples
+    return samples.reshape(-1)
 
 
 def _compute_total_duration(samples_list, sr):
@@ -353,14 +349,12 @@ def tkinter_figure(self, samples_list, sr, labels=None, title="Waveforms", zoom_
 
     self._plot_lines = []
     for label in self.labels:
-        y = _to_channel_last(self.signal_data[label])
-        n_samples, n_channels = y.shape
+        y = _to_mono(self.signal_data[label])
+        n_samples = y.shape[0]
         t = np.arange(n_samples) / float(sr)
 
-        for ch in range(n_channels):
-            ch_label = f"{label} (ch {ch})" if n_channels > 1 else label
-            line, = self.ax.plot(t, y[:, ch], label=ch_label)
-            self._plot_lines.append(line)
+        line, = self.ax.plot(t, y, label=label)
+        self._plot_lines.append(line)
 
     self.lines_by_label = {line.get_label(): line for line in self._plot_lines}
 
@@ -472,11 +466,6 @@ def _build_playback_controls(app, parent, labels):
     tk.Label(controls, text="Play:").pack(side=tk.LEFT, padx=(8, 4), pady=6)
     tk.OptionMenu(controls, app.selected_label, *labels).pack(side=tk.LEFT, padx=4, pady=6)
 
-    app.selected_channel = tk.IntVar(value=0)
-    tk.Label(controls, text="Channel:").pack(side=tk.LEFT, padx=(12, 4), pady=6)
-    tk.Spinbox(controls, from_=0, to=16, width=3, textvariable=app.selected_channel).pack(
-        side=tk.LEFT, padx=4, pady=6
-    )
 
     tk.Button(controls, text="Play", command=lambda: _on_play(app)).pack(side=tk.LEFT, padx=8, pady=6)
     tk.Button(controls, text="Stop", command=stop_audio).pack(side=tk.LEFT, padx=4, pady=6)
@@ -909,10 +898,5 @@ setattr(tk.Misc, "_show_bottom_mode", _attach_show_mode())
 
 def _on_play(app):
     label = app.selected_label.get()
-    try:
-        idx = app.labels.index(label)
-    except ValueError:
-        idx = 0
-
-    y = np.asarray(app.signal_data[app.labels[idx]], dtype=np.float32).reshape(-1)
+    y = np.asarray(app.signal_data.get(label, app.signal_data[app.labels[0]]), dtype=np.float32).reshape(-1)
     play_audio(y, app.sr, blocking=False)
