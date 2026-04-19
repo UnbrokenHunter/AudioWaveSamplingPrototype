@@ -1,6 +1,7 @@
+from debug.timer import time_method
 from loader import *
 from analysis import *
-from visualize import *
+from export import *
 from playback import *
 from reconstructions import *
 
@@ -8,6 +9,7 @@ import tkinter as tk
 import numpy as np
 
 from cache import ReconstructionCacheManager
+from visualize import request_bottom_update, tkinter_figure
 
 
 class WaveformApp(tk.Tk):
@@ -28,6 +30,7 @@ class WaveformApp(tk.Tk):
 
         self.y = np.asarray(y, dtype=np.float64)
         self.sr = sr
+        self.source_path = path
 
         self.signal_labels = [
             "original",

@@ -12,6 +12,7 @@ import matplotlib.cm as cm
 
 from debug.timer import time_method
 from playback import play_audio, stop_audio
+from export import save_selected_audio
 
 
 # ============================================================
@@ -469,6 +470,7 @@ def _build_playback_controls(app, parent, labels):
 
     tk.Button(controls, text="Play", command=lambda: _on_play(app)).pack(side=tk.LEFT, padx=8, pady=6)
     tk.Button(controls, text="Stop", command=stop_audio).pack(side=tk.LEFT, padx=4, pady=6)
+    tk.Button(controls, text="Save to File", command=lambda: save_selected_audio(app)).pack(side=tk.LEFT, padx=4, pady=6)
    
 def _hide_bottom_area(app):
     # hide plot area + toolbar
