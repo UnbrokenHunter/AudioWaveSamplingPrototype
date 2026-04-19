@@ -36,7 +36,7 @@ def one_pole_lowpass(x, sr, cutoff_hz):
 @time_method(threshold=0.05)
 def dac_reconstruction(y, idx, sr, fs, cutoff_hz=None, poles=2):
     """
-    "Genuine-ish" DAC reconstruction:
+    Genuine-ish DAC reconstruction:
       1) ZOH hold at sample update points (idx)
       2) Analog reconstruction LPF (modeled as cascaded 1-pole filters)
 
