@@ -13,7 +13,7 @@ Ensure Python 3.14 is installed, along with Python3.14-tk for the Tkinter depend
 1. Download the project, or clone it from Git:
 
 ```bash
-git clone UnbrokenHunter/AudioWaveSamplingPrototype
+git clone https://github.com/UnbrokenHunter/AudioWaveSamplingPrototype.git
 cd AudioWaveSamplingPrototype
 python -m venv c
 ```
