@@ -15,7 +15,7 @@ Ensure Python 3.14 is installed, along with Python3.14-tk for the Tkinter depend
 ```bash
 git clone https://github.com/UnbrokenHunter/AudioWaveSamplingPrototype.git
 cd AudioWaveSamplingPrototype
-python -m venv c
+python3.14 -m venv myenv
 ```
 
 2. Activate the virtual environment:
