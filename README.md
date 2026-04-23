@@ -32,6 +32,11 @@ myenv\Scripts\Activate.ps1
 myenv\Scripts\activate.bat
 ```
 
+If you receive an error stating that running scripts is not allowed on the system, you can temporarly enable them using this:
+```
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+
 **macOS / Linux:**
 
 ```bash
