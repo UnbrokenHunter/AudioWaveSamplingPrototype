@@ -6,12 +6,16 @@ This program lets you open an audio file, view the waveform, play different reco
 
 ## Installation
 
+0. Ensure prerequisites are installed:
+
+Ensure Python 3.14 is installed, along with Python3.14-tk for the Tkinter dependancy. Also ensure PortAudio is installed on the system.
+
 1. Download the project, or clone it from Git:
 
 ```bash
 git clone UnbrokenHunter/AudioWaveSamplingPrototype
 cd AudioWaveSamplingPrototype
-python -m venv .venv
+python -m venv c
 ```
 
 2. Activate the virtual environment:
@@ -19,19 +23,19 @@ python -m venv .venv
 **Windows (PowerShell):**
 
 ```bash
-.venv\Scripts\Activate.ps1
+myenv\Scripts\Activate.ps1
 ```
 
 **Windows (Command Prompt):**
 
 ```bash
-.venv\Scripts\activate.bat
+myenv\Scripts\activate.bat
 ```
 
 **macOS / Linux:**
 
 ```bash
-source .venv/bin/activate
+source myenv/bin/activate
 ```
 
 3. Install the requirements:
